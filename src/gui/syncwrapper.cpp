@@ -1,7 +1,7 @@
 #include "syncwrapper.h"
 #include "socketapi.h"
-
 #include <qdir.h>
+#include "networkjobs.h"
 
 namespace OCC {
 
@@ -81,7 +81,25 @@ void SyncWrapper::createItemAtPath(const QString path)
 
 void SyncWrapper::openFileAtPath(const QString path)
 {
-    sync(path, true, CSYNC_INSTRUCTION_NEW);
+	auto job = new PropfindJob(FolderMan::instance()->currentSyncFolder()->accountState()->account(), getRelativePath(path));
+    job->setProperties(
+        QList<QByteArray>()
+        << "http://owncloud.org/ns:fileid"
+		<< "http://owncloud.org/ns:getetag");
+    job->setTimeout(10 * 1000);
+	connect(job, &PropfindJob::result, this, [](const QVariantMap &result) {
+		qCWarning(lcSyncWrapper) << "Props received";
+		const QVariant fileid = result["fileid"];
+		const QVariant getetag = result["getetag"];
+		// now check
+		// now propagate
+
+	});
+    connect(job, &PropfindJob::finishedWithError, this, [](QNetworkReply *reply) {
+		qCWarning(lcSyncWrapper) << "PropfindJob finished with error: " << reply->errorString();
+	});
+    job->start();
+    //sync(path, true, CSYNC_INSTRUCTION_NEW);
 }
 
 void SyncWrapper::writeFileAtPath(const QString path)
