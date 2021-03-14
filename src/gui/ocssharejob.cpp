@@ -144,14 +144,12 @@ void OcsShareJob::createShare(const QString &path,
     const QString &shareWith,
     const Share::Permissions permissions)
 {
+    Q_UNUSED(permissions)
     setVerb("POST");
 
     addParam(QString::fromLatin1("path"), path);
     addParam(QString::fromLatin1("shareType"), QString::number(shareType));
     addParam(QString::fromLatin1("shareWith"), shareWith);
-    if (!(permissions & SharePermissionDefault)) {
-        addParam(QString::fromLatin1("permissions"), QString::number(permissions));
-    }
 
     start();
 }

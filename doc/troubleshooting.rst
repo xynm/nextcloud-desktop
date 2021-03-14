@@ -55,8 +55,8 @@ Identifying Basic Functionality Problems
 ---------------------
 
 If you see this error message stop your client, delete the
-``._sync_xxxxxxx.db`` file, and then restart your client.
-There is a  hidden ``._sync_xxxxxxx.db`` file inside the folder of every account
+``.sync_xxxxxxx.db`` file, and then restart your client.
+There is a  hidden ``.sync_xxxxxxx.db`` file inside the folder of every account
 configured on your client.
 
 .. NOTE::
@@ -114,11 +114,21 @@ quickly.
 Obtaining the Client Log File
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-To obtain the client log file:
+Create Debug Archive
+~~~~~~~~~~~~~~~~~~~~
+
+Since the 3.1.0 release we made it easier for users to provide debug information: debug logging is enabled by default with expiration time set to 24 hours and under the "General" settings, you can click on "Create Debug Archive ..." to pick the location of where the desktop client will export the logs and the database to a zip file.
+
+  .. image:: images/create_debug_archive.png
+
+Keyboard shortcut
+~~~~~~~~~~~~~~~~~
+
+Another way to obtain the client log file:
 
 1. Open the Nextcloud Desktop Client.
 
-2. Press F12 on your keyboard.
+2. Press F12 or Ctrl-L on your keyboard.
 
   The Log Output window opens.
 
@@ -136,6 +146,9 @@ To obtain the client log file:
 
   The log file is saved in the location specified.
 
+Command line
+~~~~~~~~~~~~
+
 Alternatively, you can launch the Nextcloud Log Output window using the
 ``--logwindow`` command. After issuing this command, the Log Output window
 opens to show the current log. You can then follow the same procedures
@@ -148,15 +161,48 @@ mentioned above to save the log to a file.
      * macOS: ``/Applications/nextcloud.app/Contents/MacOS/nextcloud --logwindow``
      * Linux: ``nextcloud --logwindow``
 
-Saving Files Directly
-~~~~~~~~~~~~~~~~~~~~~
+Config file
+~~~~~~~~~~~
 
 The Nextcloud client enables you to save log files directly to a predefined file
 or directory.  This is a useful option for troubleshooting sporadic issues as
-it enables you to log large amounts of data and bypasses the limited buffer
+it enables you to log large amounts of data and bypass the limited buffer
 settings associated with the log window.
 
-To save log files to a file or a directory:
+To enable logging to a directory, stop the client and add the following to the General section in the configuration file:
+
+::
+
+  [General]
+  logDebug=true
+  logExpire=<hours>
+  logDir=<dir>
+
+Independent of platform you must use slash (/) as a path separator:
+
+  .. note::
+    * Correct: C:/Temp
+    * Not correct: C:\Temp
+
+As an example, to keep log data for two days in a directory called temp:
+
+::
+
+  [General]
+  logDebug=true
+  logExpire=48
+  logDir=C:/Temp
+
+Once you restart the client, you will find the log file in the ``<dir>`` defined in ``logDir``.
+
+  .. note:: You will find the configuration file in the following locations:
+
+    * Microsoft Windows systems: ``%APPDATA%\Nextcloud\nextcloud.cfg``
+    * macOS systems: ``$HOME/Library/Preferences/Nextcloud/nextcloud.cfg``
+    * Linux distributions: ``$HOME/.config/Nextcloud/nextcloud.cfg``
+
+
+Alternatively, you can start the client in the command line with parameters:
 
 1. To save to a file, start the client using the ``--logfile <file>`` command,
    where ``<file>`` is the filename to which you want to save the file.

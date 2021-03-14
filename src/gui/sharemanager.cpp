@@ -37,10 +37,8 @@ static void updateFolder(const AccountPtr &account, const QString &path)
         if (path.startsWith(folderPath) && (path == folderPath || folderPath.endsWith('/') || path[folderPath.size()] == '/')) {
             // Workaround the fact that the server does not invalidate the etags of parent directories
             // when something is shared.
-            auto relative = path.midRef(folderPath.size());
-            if (relative.startsWith('/'))
-                relative = relative.mid(1);
-            f->journalDb()->avoidReadFromDbOnNextSync(relative.toString());
+            auto relative = path.midRef(f->remotePathTrailingSlash().length());
+            f->journalDb()->schedulePathForRemoteDiscovery(relative.toString());
 
             // Schedule a sync so it can update the remote permission flag and let the socket API
             // know about the shared icon.
@@ -106,7 +104,7 @@ QSharedPointer<Sharee> Share::getShareWith() const
 
 void Share::setPermissions(Permissions permissions)
 {
-    OcsShareJob *job = new OcsShareJob(_account);
+    auto *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &Share::slotPermissionsSet);
     connect(job, &OcsJob::ocsError, this, &Share::slotOcsError);
     job->setPermissions(getId(), permissions);
@@ -125,7 +123,7 @@ Share::Permissions Share::getPermissions() const
 
 void Share::deleteShare()
 {
-    OcsShareJob *job = new OcsShareJob(_account);
+    auto *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &Share::slotDeleted);
     connect(job, &OcsJob::ocsError, this, &Share::slotOcsError);
     job->deleteShare(getId());
@@ -133,9 +131,8 @@ void Share::deleteShare()
 
 void Share::slotDeleted()
 {
-    emit shareDeleted();
-
     updateFolder(_account, _path);
+    emit shareDeleted();
 }
 
 void Share::slotOcsError(int statusCode, const QString &message)
@@ -207,7 +204,7 @@ QString LinkShare::getNote() const
 
 void LinkShare::setName(const QString &name)
 {
-    OcsShareJob *job = new OcsShareJob(_account);
+    auto *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &LinkShare::slotNameSet);
     connect(job, &OcsJob::ocsError, this, &LinkShare::slotOcsError);
     job->setName(getId(), name);
@@ -215,7 +212,7 @@ void LinkShare::setName(const QString &name)
 
 void LinkShare::setNote(const QString &note)
 {
-    OcsShareJob *job = new OcsShareJob(_account);
+    auto *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &LinkShare::slotNoteSet);
     connect(job, &OcsJob::ocsError, this, &LinkShare::slotOcsError);
     job->setNote(getId(), note);
@@ -234,7 +231,7 @@ QString LinkShare::getToken() const
 
 void LinkShare::setPassword(const QString &password)
 {
-    OcsShareJob *job = new OcsShareJob(_account);
+    auto *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &LinkShare::slotPasswordSet);
     connect(job, &OcsJob::ocsError, this, &LinkShare::slotSetPasswordError);
     job->setPassword(getId(), password);
@@ -248,7 +245,7 @@ void LinkShare::slotPasswordSet(const QJsonDocument &, const QVariant &value)
 
 void LinkShare::setExpireDate(const QDate &date)
 {
-    OcsShareJob *job = new OcsShareJob(_account);
+    auto *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &LinkShare::slotExpireDateSet);
     connect(job, &OcsJob::ocsError, this, &LinkShare::slotOcsError);
     job->setExpireDate(getId(), date);
@@ -291,7 +288,7 @@ void ShareManager::createLinkShare(const QString &path,
     const QString &name,
     const QString &password)
 {
-    OcsShareJob *job = new OcsShareJob(_account);
+    auto *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &ShareManager::slotLinkShareCreated);
     connect(job, &OcsJob::ocsError, this, &ShareManager::slotOcsError);
     job->createLinkShare(path, name, password);
@@ -348,7 +345,7 @@ void ShareManager::createShare(const QString &path,
                 validPermissions &= existingPermissions;
             }
 
-            OcsShareJob *job = new OcsShareJob(_account);
+            auto *job = new OcsShareJob(_account);
             connect(job, &OcsShareJob::shareJobFinished, this, &ShareManager::slotShareCreated);
             connect(job, &OcsJob::ocsError, this, &ShareManager::slotOcsError);
             job->createShare(path, shareType, shareWith, validPermissions);
@@ -370,7 +367,7 @@ void ShareManager::slotShareCreated(const QJsonDocument &reply)
 
 void ShareManager::fetchShares(const QString &path)
 {
-    OcsShareJob *job = new OcsShareJob(_account);
+    auto *job = new OcsShareJob(_account);
     connect(job, &OcsShareJob::shareJobFinished, this, &ShareManager::slotSharesFetched);
     connect(job, &OcsJob::ocsError, this, &ShareManager::slotOcsError);
     job->getShares(path);

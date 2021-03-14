@@ -20,6 +20,7 @@
 #include "creds/httpcredentials.h"
 #include "logger.h"
 #include "configfile.h"
+#include "ocsnavigationappsjob.h"
 
 #include <QSettings>
 #include <QTimer>
@@ -27,6 +28,7 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QNetworkRequest>
 #include <QBuffer>
 
@@ -40,7 +42,6 @@ AccountState::AccountState(AccountPtr account)
     , _state(AccountState::Disconnected)
     , _connectionStatus(ConnectionValidator::Undefined)
     , _waitingForNewCredentials(false)
-    , _notificationsEtagResponseHeader("*")
     , _maintenanceToConnectedDelay(60000 + (qrand() % (4 * 60000))) // 1-5min delay
     , _remoteWipe(new RemoteWipe(_account))
 {
@@ -52,12 +53,16 @@ AccountState::AccountState(AccountPtr account)
         this, &AccountState::slotCredentialsFetched);
     connect(account.data(), &Account::credentialsAsked,
         this, &AccountState::slotCredentialsAsked);
-    _timeSinceLastETagCheck.invalidate();
+
+    connect(this, &AccountState::isConnectedChanged, [=]{
+        // Get the Apps available on the server if we're now connected.
+        if (isConnected()) {
+            fetchNavigationApps();
+        }
+    });
 }
 
-AccountState::~AccountState()
-{
-}
+AccountState::~AccountState() = default;
 
 AccountState *AccountState::loadFromSettings(AccountPtr account, QSettings & /*settings*/)
 {
@@ -151,6 +156,7 @@ bool AccountState::isSignedOut() const
 void AccountState::signOutByUi()
 {
     account()->credentials()->forgetSensitiveData();
+    account()->clearCookieJar();
     setState(SignedOut);
 }
 
@@ -174,9 +180,9 @@ bool AccountState::isConnected() const
     return _state == Connected;
 }
 
-void AccountState::tagLastSuccessfullETagRequest()
+void AccountState::tagLastSuccessfullETagRequest(const QDateTime &tp)
 {
-    _timeSinceLastETagCheck.start();
+    _timeOfLastETagCheck = tp;
 }
 
 QByteArray AccountState::notificationsEtagResponseHeader() const
@@ -220,16 +226,15 @@ void AccountState::checkConnectivity()
 
     // IF the account is connected the connection check can be skipped
     // if the last successful etag check job is not so long ago.
-    ConfigFile cfg;
-    std::chrono::milliseconds polltime = cfg.remotePollInterval();
-
-    if (isConnected() && _timeSinceLastETagCheck.isValid()
-        && _timeSinceLastETagCheck.hasExpired(polltime.count())) {
-        qCDebug(lcAccountState) << account()->displayName() << "The last ETag check succeeded within the last " << polltime.count() / 1000 << " secs. No connection check needed!";
+    const auto polltime = std::chrono::duration_cast<std::chrono::seconds>(ConfigFile().remotePollInterval());
+    const auto elapsed = _timeOfLastETagCheck.secsTo(QDateTime::currentDateTimeUtc());
+    if (isConnected() && _timeOfLastETagCheck.isValid()
+        && elapsed <= polltime.count()) {
+        qCDebug(lcAccountState) << account()->displayName() << "The last ETag check succeeded within the last " << polltime.count() << "s (" << elapsed << "s). No connection check needed!";
         return;
     }
 
-    ConnectionValidator *conValidator = new ConnectionValidator(account());
+    auto *conValidator = new ConnectionValidator(AccountStatePtr(this));
     _connectionValidator = conValidator;
     connect(conValidator, &ConnectionValidator::connectionResult,
         this, &AccountState::slotConnectionValidatorResult);
@@ -267,7 +272,7 @@ void AccountState::slotConnectionValidatorResult(ConnectionValidator::Status sta
     // Come online gradually from 503 or maintenance mode
     if (status == ConnectionValidator::Connected
         && (_connectionStatus == ConnectionValidator::ServiceUnavailable
-               || _connectionStatus == ConnectionValidator::MaintenanceMode)) {
+            || _connectionStatus == ConnectionValidator::MaintenanceMode)) {
         if (!_timeSinceMaintenanceOver.isValid()) {
             qCInfo(lcAccountState) << "AccountState reconnection: delaying for"
                                    << _maintenanceToConnectedDelay << "ms";
@@ -293,6 +298,9 @@ void AccountState::slotConnectionValidatorResult(ConnectionValidator::Status sta
     case ConnectionValidator::Connected:
         if (_state != Connected) {
             setState(Connected);
+
+            // Get the Apps available on the server.
+            fetchNavigationApps();
         }
         break;
     case ConnectionValidator::Undefined:
@@ -404,5 +412,110 @@ std::unique_ptr<QSettings> AccountState::settings()
     s->beginGroup(_account->id());
     return s;
 }
+
+void AccountState::fetchNavigationApps(){
+    auto *job = new OcsNavigationAppsJob(_account);
+    job->addRawHeader("If-None-Match", navigationAppsEtagResponseHeader());
+    connect(job, &OcsNavigationAppsJob::appsJobFinished, this, &AccountState::slotNavigationAppsFetched);
+    connect(job, &OcsNavigationAppsJob::etagResponseHeaderReceived, this, &AccountState::slotEtagResponseHeaderReceived);
+    connect(job, &OcsNavigationAppsJob::ocsError, this, &AccountState::slotOcsError);
+    job->getNavigationApps();
+}
+
+void AccountState::slotEtagResponseHeaderReceived(const QByteArray &value, int statusCode){
+    if(statusCode == 200){
+        qCDebug(lcAccountState) << "New navigation apps ETag Response Header received " << value;
+        setNavigationAppsEtagResponseHeader(value);
+    }
+}
+
+void AccountState::slotOcsError(int statusCode, const QString &message)
+{
+    qCDebug(lcAccountState) << "Error " << statusCode << " while fetching new navigation apps: " << message;
+}
+
+void AccountState::slotNavigationAppsFetched(const QJsonDocument &reply, int statusCode)
+{
+    if(_account){
+        if (statusCode == 304) {
+            qCWarning(lcAccountState) << "Status code " << statusCode << " Not Modified - No new navigation apps.";
+        } else {
+            _apps.clear();
+
+            if(!reply.isEmpty()){
+                auto element = reply.object().value("ocs").toObject().value("data");
+                const auto navLinks = element.toArray();
+
+                if(navLinks.size() > 0){
+                    for (const QJsonValue &value : navLinks) {
+                        auto navLink = value.toObject();
+
+                        auto *app = new AccountApp(navLink.value("name").toString(), QUrl(navLink.value("href").toString()),
+                            navLink.value("id").toString(), QUrl(navLink.value("icon").toString()));
+
+                        _apps << app;
+                    }
+                }
+            }
+
+            emit hasFetchedNavigationApps();
+        }
+    }
+}
+
+AccountAppList AccountState::appList() const
+{
+    return _apps;
+}
+
+AccountApp* AccountState::findApp(const QString &appId) const
+{
+    if(!appId.isEmpty()) {
+        const auto apps = appList();
+        const auto it = std::find_if(apps.cbegin(), apps.cend(), [appId](const auto &app) {
+            return app->id() == appId;
+        });
+        if (it != apps.cend()) {
+            return *it;
+        }
+    }
+
+    return nullptr;
+}
+
+/*-------------------------------------------------------------------------------------*/
+
+AccountApp::AccountApp(const QString &name, const QUrl &url,
+    const QString &id, const QUrl &iconUrl,
+    QObject *parent)
+    : QObject(parent)
+    , _name(name)
+    , _url(url)
+    , _id(id)
+    , _iconUrl(iconUrl)
+{
+}
+
+QString AccountApp::name() const
+{
+    return _name;
+}
+
+QUrl AccountApp::url() const
+{
+    return _url;
+}
+
+QString AccountApp::id() const
+{
+    return _id;
+}
+
+QUrl AccountApp::iconUrl() const
+{
+    return _iconUrl;
+}
+
+/*-------------------------------------------------------------------------------------*/
 
 } // namespace OCC

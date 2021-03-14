@@ -25,7 +25,8 @@ namespace OCC {
 Q_LOGGING_CATEGORY(lcRemoteWipe, "nextcloud.gui.remotewipe", QtInfoMsg)
 
 RemoteWipe::RemoteWipe(AccountPtr account, QObject *parent)
-    : _account(account),
+    : QObject(parent),
+      _account(account),
       _appPassword(QString()),
       _accountRemoved(false),
       _networkManager(nullptr),
@@ -100,6 +101,18 @@ void RemoteWipe::checkJobSlot()
     auto accountState = manager->account(_account->displayName()).data();
 
     if(wipe){
+        /* IMPORTANT - remove later - FIXME MS@2019-12-07 -->
+         * TODO: For "Log out" & "Remove account": Remove client CA certs and KEY!
+         *
+         *       Disabled as long as selecting another cert is not supported by the UI.
+         *
+         *       Being able to specify a new certificate is important anyway: expiry etc.
+         *
+         *       We introduce this dirty hack here, to allow deleting them upon Remote Wipe.
+         */
+        _account->setRemoteWipeRequested_HACK();
+        // <-- FIXME MS@2019-12-07
+
         // delete account
         manager->deleteAccount(accountState);
         manager->save();

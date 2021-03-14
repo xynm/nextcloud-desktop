@@ -25,12 +25,28 @@
 #include "configfile.h"
 #include "theme.h"
 #include "thumbnailjob.h"
+#include "wordlist.h"
 
 #include <QFileInfo>
 #include <QFileIconProvider>
+#include <QInputDialog>
 #include <QPointer>
 #include <QPushButton>
 #include <QFrame>
+
+namespace {
+QString createRandomPassword()
+{
+    const auto words = OCC::WordList::getRandomWords(10);
+
+    const auto addFirstLetter = [](const QString &current, const QString &next) {
+        return current + next.at(0);
+    };
+
+    return std::accumulate(std::cbegin(words), std::cend(words), QString(), addFirstLetter);
+}
+}
+
 
 namespace OCC {
 
@@ -51,10 +67,6 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
     , _maxSharingPermissions(maxSharingPermissions)
     , _privateLinkUrl(accountState->account()->deprecatedPrivateLinkUrl(numericFileId).toString(QUrl::FullyEncoded))
     , _startPage(startPage)
-    , _linkWidgetList({})
-    , _emptyShareLinkWidget(nullptr)
-    , _userGroupWidget(nullptr)
-    , _progressIndicator(nullptr)
 {
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     setAttribute(Qt::WA_DeleteOnClose);
@@ -75,11 +87,10 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
     }
 
     // Set filename
-    QFileInfo lPath(_localPath);
-    QString fileName = lPath.fileName();
+    QString fileName = QFileInfo(_sharePath).fileName();
     _ui->label_name->setText(tr("%1").arg(fileName));
     QFont f(_ui->label_name->font());
-    f.setPointSize(f.pointSize() * 1.4);
+    f.setPointSize(qRound(f.pointSize() * 1.4));
     _ui->label_name->setFont(f);
 
     QString ocDir(_sharePath);
@@ -108,7 +119,7 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
     }
 
     if (QFileInfo(_localPath).isFile()) {
-        ThumbnailJob *job = new ThumbnailJob(_sharePath, _accountState->account(), this);
+        auto *job = new ThumbnailJob(_sharePath, _accountState->account(), this);
         connect(job, &ThumbnailJob::jobFinished, this, &ShareDialog::slotThumbnailFetched);
         job->start();
     }
@@ -137,6 +148,7 @@ ShareDialog::ShareDialog(QPointer<AccountState> accountState,
         _manager = new ShareManager(accountState->account(), this);
         connect(_manager, &ShareManager::sharesFetched, this, &ShareDialog::slotSharesFetched);
         connect(_manager, &ShareManager::linkShareCreated, this, &ShareDialog::slotAddLinkShareWidget);
+        connect(_manager, &ShareManager::linkShareRequiresPassword, this, &ShareDialog::slotLinkShareRequiresPassword);
     }
 }
 
@@ -147,14 +159,20 @@ void ShareDialog::addLinkShareWidget(const QSharedPointer<LinkShare> &linkShare)
 
     connect(linkShare.data(), &Share::serverError, _linkWidgetList.at(index), &ShareLinkWidget::slotServerError);
     connect(linkShare.data(), &Share::shareDeleted, _linkWidgetList.at(index), &ShareLinkWidget::slotDeleteShareFetched);
-    connect(_manager, &ShareManager::linkShareRequiresPassword, _linkWidgetList.at(index), &ShareLinkWidget::slotCreateShareRequiresPassword);
-    connect(_manager, &ShareManager::serverError, _linkWidgetList.at(index), &ShareLinkWidget::slotServerError);
+
+    if(_manager) {
+        connect(_manager, &ShareManager::linkShareRequiresPassword, _linkWidgetList.at(index), &ShareLinkWidget::slotCreateShareRequiresPassword);
+        connect(_manager, &ShareManager::serverError, _linkWidgetList.at(index), &ShareLinkWidget::slotServerError);
+    }
 
     // Connect all shares signals to gui slots
     connect(this, &ShareDialog::toggleAnimation, _linkWidgetList.at(index), &ShareLinkWidget::slotToggleAnimation);
     connect(_linkWidgetList.at(index), &ShareLinkWidget::createLinkShare, this, &ShareDialog::slotCreateLinkShare);
     connect(_linkWidgetList.at(index), &ShareLinkWidget::deleteLinkShare, this, &ShareDialog::slotDeleteShare);
     //connect(_linkWidgetList.at(index), &ShareLinkWidget::resizeRequested, this, &ShareDialog::slotAdjustScrollWidgetSize);
+
+    // Connect styleChanged events to our widget, so it can adapt (Dark-/Light-Mode switching)
+    connect(this, &ShareDialog::styleChanged, _linkWidgetList.at(index), &ShareLinkWidget::slotStyleChanged);
 
     _ui->verticalLayout->insertWidget(_linkWidgetList.size()+1, _linkWidgetList.at(index));
     _linkWidgetList.at(index)->setupUiOptions();
@@ -164,6 +182,10 @@ void ShareDialog::initLinkShareWidget(){
     if(_linkWidgetList.size() == 0){
         _emptyShareLinkWidget = new ShareLinkWidget(_accountState->account(), _sharePath, _localPath, _maxSharingPermissions, this);
         _linkWidgetList.append(_emptyShareLinkWidget);
+
+        if (_manager) {
+            connect(_manager, &ShareManager::linkShareRequiresPassword, _emptyShareLinkWidget, &ShareLinkWidget::slotCreateShareRequiresPassword);
+        }
 
         connect(_emptyShareLinkWidget, &ShareLinkWidget::resizeRequested, this, &ShareDialog::slotAdjustScrollWidgetSize);
 //        connect(this, &ShareDialog::toggleAnimation, _emptyShareLinkWidget, &ShareLinkWidget::slotToggleAnimation);
@@ -281,20 +303,50 @@ void ShareDialog::showSharingUi()
 
     if (userGroupSharing) {
         _userGroupWidget = new ShareUserGroupWidget(_accountState->account(), _sharePath, _localPath, _maxSharingPermissions, _privateLinkUrl, this);
+
+        // Connect styleChanged events to our widget, so it can adapt (Dark-/Light-Mode switching)
+        connect(this, &ShareDialog::styleChanged, _userGroupWidget, &ShareUserGroupWidget::slotStyleChanged);
+
         _ui->verticalLayout->insertWidget(1, _userGroupWidget);
         _userGroupWidget->getShares();
     }
 
     if (theme->linkSharing()) {
-        _manager->fetchShares(_sharePath);
+        if(_manager) {
+            _manager->fetchShares(_sharePath);
+        }
     }
 }
 
 void ShareDialog::slotCreateLinkShare()
 {
-    _manager->createLinkShare(_sharePath, QString(), QString());
+    if(_manager) {
+        const auto askOptionalPassword = _accountState->account()->capabilities().sharePublicLinkAskOptionalPassword();
+        const auto password = askOptionalPassword ? createRandomPassword() : QString();
+        _manager->createLinkShare(_sharePath, QString(), password);
+    }
 }
 
+void ShareDialog::slotLinkShareRequiresPassword()
+{
+    bool ok = false;
+    QString password = QInputDialog::getText(this,
+                                             tr("Password for share required"),
+                                             tr("Please enter a password for your link share:"),
+                                             QLineEdit::Normal,
+                                             QString(),
+                                             &ok);
+
+    if (!ok) {
+        // The dialog was canceled so no need to do anything
+        return;
+    }
+
+    if(_manager) {
+        // Try to create the link share again with the newly entered password
+        _manager->createLinkShare(_sharePath, QString(), password);
+    }
+}
 
 void ShareDialog::slotDeleteShare()
 {
@@ -324,7 +376,7 @@ void ShareDialog::slotAccountStateChanged(int state)
     bool enabled = (state == AccountState::State::Connected);
     qCDebug(lcSharing) << "Account connected?" << enabled;
 
-    if (_userGroupWidget != nullptr) {
+    if (_userGroupWidget) {
         _userGroupWidget->setEnabled(enabled);
     }
 
@@ -334,4 +386,21 @@ void ShareDialog::slotAccountStateChanged(int state)
         }
     }
 }
+
+void ShareDialog::changeEvent(QEvent *e)
+{
+    switch (e->type()) {
+    case QEvent::StyleChange:
+    case QEvent::PaletteChange:
+    case QEvent::ThemeChange:
+        // Notify the other widgets (Dark-/Light-Mode switching)
+        emit styleChanged();
+        break;
+    default:
+        break;
+    }
+
+    QDialog::changeEvent(e);
 }
+
+} // namespace OCC

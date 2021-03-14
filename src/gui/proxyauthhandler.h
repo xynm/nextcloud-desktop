@@ -57,7 +57,6 @@ public slots:
         QAuthenticator *authenticator);
 
 private slots:
-    void slotKeychainJobDone();
     void slotSenderDestroyed(QObject *);
 
 private:
@@ -72,6 +71,12 @@ private:
     /// Stores the current credentials in the keychain.
     void storeCredsInKeychain();
 
+    template<class T, typename PointerToMemberFunction>
+    void execAwait(const T *sender,
+                   PointerToMemberFunction signal,
+                   int &counter,
+                   const QEventLoop::ProcessEventsFlags flags = QEventLoop::AllEvents);
+
     QString keychainUsernameKey() const;
     QString keychainPasswordKey() const;
 
@@ -84,14 +89,13 @@ private:
 
     /// If the user cancels the credential dialog, blocked will be set to
     /// true and we won't bother him again.
-    bool _blocked;
+    bool _blocked = false;
 
     /// In several instances handleProxyAuthenticationRequired() can be called
     /// while it is still running. These counters detect what we're currently
     /// waiting for.
-    int _waitingForDialog;
-    int _waitingForKeychain;
-    bool _keychainJobRunning;
+    int _waitingForDialog = 0;
+    int _waitingForKeychain = 0;
 
     QPointer<ProxyAuthDialog> _dialog;
 

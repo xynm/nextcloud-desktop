@@ -22,7 +22,7 @@
 #include <QTimer>
 
 #include "folder.h"
-#include "quotainfo.h"
+#include "userinfo.h"
 #include "progressdispatcher.h"
 #include "owncloudgui.h"
 #include "folderstatusmodel.h"
@@ -51,6 +51,7 @@ class FolderStatusModel;
 class AccountSettings : public QWidget
 {
     Q_OBJECT
+    Q_PROPERTY(AccountState* accountState MEMBER _accountState)
 
 public:
     explicit AccountSettings(AccountState *accountState, QWidget *parent = nullptr);
@@ -62,19 +63,21 @@ signals:
     void folderChanged();
     void openFolderAlias(const QString &);
     void showIssuesList(AccountState *account);
-    void requesetMnemonic();
+    void requestMnemonic();
     void removeAccountFolders(AccountState *account);
+    void styleChanged();
 
 public slots:
     void slotOpenOC();
-    void slotUpdateQuota(qint64, qint64);
+    void slotUpdateQuota(qint64 total, qint64 used);
     void slotAccountStateChanged();
-
+    void slotStyleChanged();
     AccountState *accountsState() { return _accountState; }
+    void slotHideSelectiveSyncWidget();
 
 protected slots:
     void slotAddFolder();
-    void slotEnableCurrentFolder();
+    void slotEnableCurrentFolder(bool terminate = false);
     void slotScheduleCurrentFolder();
     void slotScheduleCurrentFolderForceRemoteDiscovery();
     void slotForceSyncCurrentFolder();
@@ -82,46 +85,31 @@ protected slots:
     void slotOpenCurrentFolder(); // sync folder
     void slotOpenCurrentLocalSubFolder(); // selected subfolder in sync folder
     void slotEditCurrentIgnoredFiles();
+    void slotOpenMakeFolderDialog();
     void slotEditCurrentLocalIgnoredFiles();
+    void slotEnableVfsCurrentFolder();
+    void slotDisableVfsCurrentFolder();
+    void slotSetCurrentFolderAvailability(PinState state);
+    void slotSetSubFolderAvailability(Folder *folder, const QString &path, PinState state);
     void slotFolderWizardAccepted();
     void slotFolderWizardRejected();
     void slotDeleteAccount();
     void slotToggleSignInState();
-    void slotOpenAccountWizard();
-    void slotAccountAdded(AccountState *);
     void refreshSelectiveSyncStatus();
-    void slotMarkSubfolderEncrypted(const FolderStatusModel::SubFolderInfo* folderInfo);
-    void slotMarkSubfolderDecrypted(const FolderStatusModel::SubFolderInfo* folderInfo);
+    void slotMarkSubfolderEncrypted(FolderStatusModel::SubFolderInfo *folderInfo);
     void slotSubfolderContextMenuRequested(const QModelIndex& idx, const QPoint& point);
     void slotCustomContextMenuRequested(const QPoint &);
     void slotFolderListClicked(const QModelIndex &indx);
     void doExpand();
     void slotLinkActivated(const QString &link);
 
-    void slotMenuBeforeShow();
-
     // Encryption Related Stuff.
     void slotShowMnemonic(const QString &mnemonic);
     void slotNewMnemonicGenerated();
+    void slotEncryptFolderFinished(int status);
 
-    void slotEncryptionFlagSuccess(const QByteArray &folderId);
-    void slotEncryptionFlagError(const QByteArray &folderId, int httpReturnCode);
-    void slotLockForEncryptionSuccess(const QByteArray& folderId, const QByteArray& token);
-    void slotLockForEncryptionError(const QByteArray &folderId, int httpReturnCode);
-    void slotUnlockFolderSuccess(const QByteArray& folderId);
-    void slotUnlockFolderError(const QByteArray& folderId, int httpReturnCode);
-    void slotUploadMetadataSuccess(const QByteArray& folderId);
-    void slotUpdateMetadataError(const QByteArray& folderId, int httpReturnCode);
-
-    // Remove Encryption Bit.
-    void slotLockForDecryptionSuccess(const QByteArray& folderId, const QByteArray& token);
-    void slotLockForDecryptionError(const QByteArray& folderId, int httpReturnCode);
-    void slotDeleteMetadataSuccess(const QByteArray& folderId);
-    void slotDeleteMetadataError(const QByteArray& folderId, int httpReturnCode);
-    void slotUnlockForDecryptionSuccess(const QByteArray& folderId);
-    void slotUnlockForDecryptionError(const QByteArray& folderId, int httpReturnCode);
-    void slotDecryptionFlagSuccess(const QByteArray& folderId);
-    void slotDecryptionFlagError(const QByteArray& folderId, int httpReturnCode);
+    void slotSelectiveSyncChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight,
+                                  const QVector<int> &roles);
 
 private:
     void showConnectionLabel(const QString &message,
@@ -129,17 +117,18 @@ private:
     bool event(QEvent *) override;
     void createAccountToolbox();
     void openIgnoredFilesDialog(const QString & absFolderPath);
+    void customizeStyle();
 
     /// Returns the alias of the selected folder, empty string if none
     QString selectedFolderAlias() const;
 
-    Ui::AccountSettings *ui;
+    Ui::AccountSettings *_ui;
 
     FolderStatusModel *_model;
     QUrl _OCUrl;
     bool _wasDisabledBefore;
     AccountState *_accountState;
-    QuotaInfo _quotaInfo;
+    UserInfo _userInfo;
     QAction *_toggleSignInOutAction;
     QAction *_addAccountAction;
 

@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 
 #include "common/utility.h"
+#include "config.h"
 
 using namespace OCC::Utility;
 
@@ -20,6 +21,11 @@ class TestUtility : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        QStandardPaths::setTestModeEnabled(true);
+    }
+
     void testFormatFingerprint()
     {
         QVERIFY2(formatFingerprint("68ac906495480a3404beee4874ed853a037a7a8f")
@@ -109,22 +115,20 @@ private slots:
 
     void testVersionOfInstalledBinary()
     {
-	if( isLinux() ) {
-            if ( qgetenv("DISPLAY").isEmpty() ) {
-                // Current requires an X-Server
-                return;
-            }
-            // pass the binary name owncloud to the next call. This brakes branding,
-            // but branding is not supposed to work with this.
-            QString ver = versionOfInstalledBinary(OWNCLOUD_BIN_PATH+QLatin1String("/nextcloud"));
-	    qDebug() << "Version of installed Nextcloud: " << ver;
-	    QVERIFY( !ver.isEmpty());
+        if (isLinux()) {
+            // pass the cmd client from our build dir
+            // this is a bit inaccurate as it does not test the "real thing"
+            // but cmd and gui have the same --version handler by now
+            // and cmd works without X in CI
+            QString ver = versionOfInstalledBinary(QStringLiteral(OWNCLOUD_BIN_PATH  "/" APPLICATION_EXECUTABLE "cmd"));
+            qDebug() << "Version of installed Nextcloud: " << ver;
+            QVERIFY(!ver.isEmpty());
 
-	    QRegExp rx( "Nextcloud version \\d+\\.\\d+\\.\\d+.*" );
-            QVERIFY( rx.exactMatch(ver));
-	} else {
-	    QVERIFY( versionOfInstalledBinary().isEmpty());
-	}
+            QRegExp rx(APPLICATION_SHORTNAME R"( version \d+\.\d+\.\d+.*)");
+            QVERIFY(rx.exactMatch(ver));
+        } else {
+            QVERIFY(versionOfInstalledBinary().isEmpty());
+        }
     }
 
     void testTimeAgo()
@@ -156,9 +160,9 @@ private slots:
     {
         QVERIFY(isMac() || isWindows() ? fsCasePreserving() : ! fsCasePreserving());
         QScopedValueRollback<bool> scope(OCC::fsCasePreserving_override);
-        OCC::fsCasePreserving_override = 1;
+        OCC::fsCasePreserving_override = true;
         QVERIFY(fsCasePreserving());
-        OCC::fsCasePreserving_override = 0;
+        OCC::fsCasePreserving_override = false;
         QVERIFY(! fsCasePreserving());
     }
 
@@ -211,6 +215,26 @@ private slots:
         QFETCH(QString, input);
         QFETCH(QString, output);
         QCOMPARE(sanitizeForFileName(input), output);
+    }
+
+    void testNormalizeEtag()
+    {
+        QByteArray str;
+
+#define CHECK_NORMALIZE_ETAG(TEST, EXPECT) \
+    str = OCC::Utility::normalizeEtag(TEST); \
+    QCOMPARE(str.constData(), EXPECT); \
+
+        CHECK_NORMALIZE_ETAG("foo", "foo");
+        CHECK_NORMALIZE_ETAG("\"foo\"", "foo");
+        CHECK_NORMALIZE_ETAG("\"nar123\"", "nar123");
+        CHECK_NORMALIZE_ETAG("", "");
+        CHECK_NORMALIZE_ETAG("\"\"", "");
+
+        /* Test with -gzip (all combinaison) */
+        CHECK_NORMALIZE_ETAG("foo-gzip", "foo");
+        CHECK_NORMALIZE_ETAG("\"foo\"-gzip", "foo");
+        CHECK_NORMALIZE_ETAG("\"foo-gzip\"", "foo");
     }
 };
 

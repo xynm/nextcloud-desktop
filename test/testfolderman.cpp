@@ -17,7 +17,6 @@
 #include "testhelper.h"
 
 using namespace OCC;
-class HttpCredentials;
 
 class TestFolderMan: public QObject
 {
@@ -28,6 +27,9 @@ class TestFolderMan: public QObject
 private slots:
     void testCheckPathValidityForNewFolder()
     {
+#ifdef Q_OS_WIN
+        Utility::NtfsPermissionLookupRAII ntfs_perm;
+#endif
         QTemporaryDir dir;
         ConfigFile::setConfDir(dir.path()); // we don't want to pollute the user's config file
         QVERIFY(dir.isValid());
@@ -45,7 +47,7 @@ private slots:
 
         AccountPtr account = Account::create();
         QUrl url("http://example.de");
-        HttpCredentialsTest *cred = new HttpCredentialsTest("testuser", "secret");
+        auto *cred = new HttpCredentialsTest("testuser", "secret");
         account->setCredentials(cred);
         account->setUrl( url );
 
@@ -125,6 +127,19 @@ private slots:
         QVERIFY(!folderman->checkPathValidityForNewFolder("/usr/bin/somefolder").isNull());
 #endif
 
+#ifdef Q_OS_WIN // drive-letter tests
+        if (!QFileInfo("v:/").exists()) {
+            QVERIFY(!folderman->checkPathValidityForNewFolder("v:").isNull());
+            QVERIFY(!folderman->checkPathValidityForNewFolder("v:/").isNull());
+            QVERIFY(!folderman->checkPathValidityForNewFolder("v:/foo").isNull());
+        }
+        if (QFileInfo("c:/").isWritable()) {
+            QVERIFY(folderman->checkPathValidityForNewFolder("c:").isNull());
+            QVERIFY(folderman->checkPathValidityForNewFolder("c:/").isNull());
+            QVERIFY(folderman->checkPathValidityForNewFolder("c:/foo").isNull());
+        }
+#endif
+
         // Invalid paths
         QVERIFY(!folderman->checkPathValidityForNewFolder("").isNull());
 
@@ -153,7 +168,7 @@ private slots:
 
         AccountPtr account = Account::create();
         QUrl url("http://example.de");
-        HttpCredentialsTest *cred = new HttpCredentialsTest("testuser", "secret");
+        auto *cred = new HttpCredentialsTest("testuser", "secret");
         account->setCredentials(cred);
         account->setUrl( url );
         url.setUserName(cred->user());

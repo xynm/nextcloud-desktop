@@ -44,10 +44,13 @@ public:
         TypeUser = Sharee::User,
         TypeGroup = Sharee::Group,
         TypeLink = 3,
-        TypeRemote = Sharee::Federated
+        TypeEmail = Sharee::Email,
+        TypeRemote = Sharee::Federated,
+        TypeCircle = Sharee::Circle,
+        TypeRoom = Sharee::Room
     };
 
-    typedef SharePermissions Permissions;
+    using Permissions = SharePermissions;
 
     /*
      * Constructor for shares

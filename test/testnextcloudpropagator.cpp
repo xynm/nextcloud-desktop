@@ -22,7 +22,7 @@ class TestNextcloudPropagator : public QObject
 private slots:
     void testUpdateErrorFromSession()
     {
-//        NextcloudPropagator propagator( NULL, QLatin1String("test1"), QLatin1String("test2"), new ProgressDatabase);
+        //OwncloudPropagator propagator(nullptr, QLatin1String("test1"), QLatin1String("test2"), new ProgressDatabase);
         QVERIFY( true );
     }
 
@@ -65,7 +65,7 @@ private slots:
 
     void testParseEtag()
     {
-        typedef QPair<const char*, const char*> Test;
+        using Test = QPair<const char*, const char*>;
         QList<Test> tests;
         tests.append(Test("\"abcd\"", "abcd"));
         tests.append(Test("\"\"", ""));

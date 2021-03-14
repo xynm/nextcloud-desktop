@@ -18,11 +18,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include <stdlib.h>
-#include <string.h>
+#include <cstdlib>
+#include <cstring>
 
-#include "c_macro.h"
-#include "c_alloc.h"
-#include "c_string.h"
-#include "c_time.h"
 #include "c_private.h"

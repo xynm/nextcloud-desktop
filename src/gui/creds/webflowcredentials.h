@@ -19,6 +19,11 @@ namespace QKeychain {
 
 namespace OCC {
 
+namespace KeychainChunk {
+    class ReadJob;
+    class WriteJob;
+}
+
 class WebFlowCredentialsDialog;
 
 class WebFlowCredentials : public AbstractCredentials
@@ -40,7 +45,7 @@ public:
 
     QString authType() const override;
     QString user() const override;
-    QString password() const;
+    QString password() const override;
     QNetworkAccessManager *createQNAM() const override;
 
     bool ready() const override;
@@ -61,15 +66,16 @@ private slots:
     void slotFinished(QNetworkReply *reply);
 
     void slotAskFromUserCredentialsProvided(const QString &user, const QString &pass, const QString &host);
+    void slotAskFromUserCancelled();
 
-    void slotReadClientCertPEMJobDone(QKeychain::Job *incomingJob);
-    void slotReadClientKeyPEMJobDone(QKeychain::Job *incomingJob);
-    void slotReadClientCaCertsPEMJobDone(QKeychain::Job *incommingJob);
+    void slotReadClientCertPEMJobDone(KeychainChunk::ReadJob *readJob);
+    void slotReadClientKeyPEMJobDone(KeychainChunk::ReadJob *readJob);
+    void slotReadClientCaCertsPEMJobDone(KeychainChunk::ReadJob *readJob);
     void slotReadPasswordJobDone(QKeychain::Job *incomingJob);
 
-    void slotWriteClientCertPEMJobDone();
-    void slotWriteClientKeyPEMJobDone();
-    void slotWriteClientCaCertsPEMJobDone(QKeychain::Job *incomingJob);
+    void slotWriteClientCertPEMJobDone(KeychainChunk::WriteJob *writeJob);
+    void slotWriteClientKeyPEMJobDone(KeychainChunk::WriteJob *writeJob);
+    void slotWriteClientCaCertsPEMJobDone(KeychainChunk::WriteJob *writeJob);
     void slotWriteJobDone(QKeychain::Job *);
 
 private:
@@ -83,7 +89,7 @@ private:
     void writeSingleClientCaCertPEM();
 
     /*
-     * Since we're limited by Windows limits we just create our own
+     * Since we're limited by Windows limits, we just create our own
      * limit to avoid evil things happening by endless recursion
      *
      * Better than storing the count and relying on maybe-hacked values
@@ -113,14 +119,13 @@ protected:
     QSslCertificate _clientSslCertificate;
     QList<QSslCertificate> _clientSslCaCertificates;
 
-    bool _ready;
-    bool _credentialsValid;
-    bool _keychainMigration;
-    bool _retryOnKeyChainError = true; // true if we haven't done yet any reading from keychain
+    bool _ready = false;
+    bool _credentialsValid = false;
+    bool _keychainMigration = false;
 
-    WebFlowCredentialsDialog *_askDialog;
+    WebFlowCredentialsDialog *_askDialog = nullptr;
 };
 
-}
+} // namespace OCC
 
 #endif // WEBFLOWCREDENTIALS_H

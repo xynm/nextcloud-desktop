@@ -84,9 +84,9 @@ void OwncloudHttpCredsPage::initializePage()
 {
     WizardCommon::initErrorLabel(_ui.errorLabel);
 
-    OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
+    auto *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
     AbstractCredentials *cred = ocWizard->account()->credentials();
-    HttpCredentials *httpCreds = qobject_cast<HttpCredentials *>(cred);
+    auto *httpCreds = qobject_cast<HttpCredentials *>(cred);
     if (httpCreds) {
         const QString user = httpCreds->fetchUser();
         if (!user.isEmpty()) {
@@ -134,7 +134,7 @@ bool OwncloudHttpCredsPage::validatePage()
         startSpinner();
 
         // Reset cookies to ensure the username / password is actually used
-        OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
+        auto *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
         ocWizard->account()->clearCookieJar();
 
         emit completeChanged();
@@ -191,8 +191,18 @@ void OwncloudHttpCredsPage::setErrorString(const QString &err)
 
 AbstractCredentials *OwncloudHttpCredsPage::getCredentials() const
 {
-    return new HttpCredentialsGui(_ui.leUsername->text(), _ui.lePassword->text(), _ocWizard->_clientSslCertificate, _ocWizard->_clientSslKey);
+    return new HttpCredentialsGui(_ui.leUsername->text(), _ui.lePassword->text(), _ocWizard->_clientCertBundle, _ocWizard->_clientCertPassword);
 }
 
+void OwncloudHttpCredsPage::slotStyleChanged()
+{
+    customizeStyle();
+}
+
+void OwncloudHttpCredsPage::customizeStyle()
+{
+    if(_progressIndi)
+        _progressIndi->setColor(QGuiApplication::palette().color(QPalette::Text));
+}
 
 } // namespace OCC

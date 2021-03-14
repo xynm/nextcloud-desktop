@@ -75,24 +75,109 @@ bool MoveJob::finished()
 
 void PropagateRemoteMove::start()
 {
-    if (propagator()->_abortRequested.fetchAndAddRelaxed(0))
+    if (propagator()->_abortRequested)
         return;
 
-    qCDebug(lcPropagateRemoteMove) << _item->_file << _item->_renameTarget;
+    QString origin = propagator()->adjustRenamedPath(_item->_file);
+    qCDebug(lcPropagateRemoteMove) << origin << _item->_renameTarget;
 
-    QString targetFile(propagator()->getFilePath(_item->_renameTarget));
+    QString targetFile(propagator()->fullLocalPath(_item->_renameTarget));
 
-    if (_item->_file == _item->_renameTarget) {
+    if (origin == _item->_renameTarget) {
         // The parent has been renamed already so there is nothing more to do.
+
+        if (!_item->_encryptedFileName.isEmpty()) {
+            // when renaming non-encrypted folder that contains encrypted folder, nested files of its encrypted folder are incorrectly displayed in the Settings dialog
+            // encrypted name is displayed instead of a local folder name, unless the sync folder is removed, then added again and re-synced
+            // we are fixing it by modifying the "_encryptedFileName" in such a way so it will have a renamed root path at the beginning of it as expected
+            // corrected "_encryptedFileName" is later used in propagator()->updateMetadata() call that will update the record in the Sync journal DB
+
+            const auto path = _item->_file;
+            const auto slashPosition = path.lastIndexOf('/');
+            const auto parentPath = slashPosition >= 0 ? path.left(slashPosition) : QString();
+
+            SyncJournalFileRecord parentRec;
+            bool ok = propagator()->_journal->getFileRecord(parentPath, &parentRec);
+            if (!ok) {
+                done(SyncFileItem::NormalError);
+                return;
+            }
+
+            const auto remoteParentPath = parentRec._e2eMangledName.isEmpty() ? parentPath : parentRec._e2eMangledName;
+
+            const auto lastSlashPosition = _item->_encryptedFileName.lastIndexOf('/');
+            const auto encryptedName = lastSlashPosition >= 0 ? _item->_encryptedFileName.mid(lastSlashPosition + 1) : QString();
+
+            if (!encryptedName.isEmpty()) {
+                _item->_encryptedFileName = remoteParentPath + "/" + encryptedName;
+            }
+        }
+
         finalize();
         return;
     }
 
-    QString destination = QDir::cleanPath(propagator()->account()->url().path() + QLatin1Char('/')
-        + propagator()->account()->davPath() + propagator()->_remoteFolder + _item->_renameTarget);
-    _job = new MoveJob(propagator()->account(),
-        propagator()->_remoteFolder + _item->_file,
-        destination, this);
+    QString remoteSource = propagator()->fullRemotePath(origin);
+    QString remoteDestination = QDir::cleanPath(propagator()->account()->davUrl().path() + propagator()->fullRemotePath(_item->_renameTarget));
+
+    auto &vfs = propagator()->syncOptions()._vfs;
+    auto itype = _item->_type;
+    ASSERT(itype != ItemTypeVirtualFileDownload && itype != ItemTypeVirtualFileDehydration);
+    if (vfs->mode() == Vfs::WithSuffix && itype != ItemTypeDirectory) {
+        const auto suffix = vfs->fileSuffix();
+        bool sourceHadSuffix = remoteSource.endsWith(suffix);
+        bool destinationHadSuffix = remoteDestination.endsWith(suffix);
+
+        // Remote source and destination definitely shouldn't have the suffix
+        if (sourceHadSuffix)
+            remoteSource.chop(suffix.size());
+        if (destinationHadSuffix)
+            remoteDestination.chop(suffix.size());
+
+        QString folderTarget = _item->_renameTarget;
+
+        // Users can rename the file *and at the same time* add or remove the vfs
+        // suffix. That's a complicated case where a remote rename plus a local hydration
+        // change is requested. We don't currently deal with that. Instead, the rename
+        // is propagated and the local vfs suffix change is reverted.
+        // The discovery would still set up _renameTarget without the changed
+        // suffix, since that's what must be propagated to the remote but the local
+        // file may have a different name. folderTargetAlt will contain this potential
+        // name.
+        QString folderTargetAlt = folderTarget;
+        if (itype == ItemTypeFile) {
+            ASSERT(!sourceHadSuffix && !destinationHadSuffix);
+
+            // If foo -> bar.owncloud, the rename target will be "bar"
+            folderTargetAlt = folderTarget + suffix;
+
+        } else if (itype == ItemTypeVirtualFile) {
+            ASSERT(sourceHadSuffix && destinationHadSuffix);
+
+            // If foo.owncloud -> bar, the rename target will be "bar.owncloud"
+            folderTargetAlt.chop(suffix.size());
+        }
+
+        QString localTarget = propagator()->fullLocalPath(folderTarget);
+        QString localTargetAlt = propagator()->fullLocalPath(folderTargetAlt);
+
+        // If the expected target doesn't exist but a file with different hydration
+        // state does, rename the local file to bring it in line with what the discovery
+        // has set up.
+        if (!FileSystem::fileExists(localTarget) && FileSystem::fileExists(localTargetAlt)) {
+            QString error;
+            if (!FileSystem::uncheckedRenameReplace(localTargetAlt, localTarget, &error)) {
+                done(SyncFileItem::NormalError, tr("Could not rename %1 to %2, error: %3")
+                     .arg(folderTargetAlt, folderTarget, error));
+                return;
+            }
+            qCInfo(lcPropagateRemoteMove) << "Suffix vfs required local rename of"
+                                          << folderTargetAlt << "to" << folderTarget;
+        }
+    }
+    qCDebug(lcPropagateRemoteMove) << remoteSource << remoteDestination;
+
+    _job = new MoveJob(propagator()->account(), remoteSource, remoteDestination, this);
     connect(_job.data(), &MoveJob::finishedSignal, this, &PropagateRemoteMove::slotMoveJobFinished);
     propagator()->_activeJobList.append(this);
     _job->start();
@@ -116,6 +201,8 @@ void PropagateRemoteMove::slotMoveJobFinished()
 
     QNetworkReply::NetworkError err = _job->reply()->error();
     _item->_httpErrorCode = _job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    _item->_responseTimeStamp = _job->responseTimestamp();
+    _item->_requestId = _job->requestId();
 
     if (err != QNetworkReply::NoError) {
         SyncFileItem::Status status = classifyError(err, _item->_httpErrorCode,
@@ -123,8 +210,6 @@ void PropagateRemoteMove::slotMoveJobFinished()
         done(status, _job->errorString());
         return;
     }
-
-    _item->_responseTimeStamp = _job->responseTimestamp();
 
     if (_item->_httpErrorCode != 201) {
         // Normally we expect "201 Created"
@@ -142,32 +227,43 @@ void PropagateRemoteMove::slotMoveJobFinished()
 
 void PropagateRemoteMove::finalize()
 {
-    SyncJournalFileRecord oldRecord;
-    propagator()->_journal->getFileRecord(_item->_originalFile, &oldRecord);
+    // Retrieve old db data.
     // if reading from db failed still continue hoping that deleteFileRecord
     // reopens the db successfully.
     // The db is only queried to transfer the content checksum from the old
     // to the new record. It is not a problem to skip it here.
-    propagator()->_journal->deleteFileRecord(_item->_originalFile);
+    SyncJournalFileRecord oldRecord;
+    propagator()->_journal->getFileRecord(_item->_originalFile, &oldRecord);
+    auto &vfs = propagator()->syncOptions()._vfs;
+    auto pinState = vfs->pinState(_item->_originalFile);
 
-    SyncJournalFileRecord record = _item->toSyncJournalFileRecordWithInode(propagator()->getFilePath(_item->_renameTarget));
-    record._path = _item->_renameTarget.toUtf8();
+    // Delete old db data.
+    propagator()->_journal->deleteFileRecord(_item->_originalFile);
+    vfs->setPinState(_item->_originalFile, PinState::Inherited);
+
+    SyncFileItem newItem(*_item);
+    newItem._type = _item->_type;
     if (oldRecord.isValid()) {
-        record._checksumHeader = oldRecord._checksumHeader;
-        if (record._fileSize != oldRecord._fileSize) {
-            qCWarning(lcPropagateRemoteMove) << "File sizes differ on server vs sync journal: " << record._fileSize << oldRecord._fileSize;
+        newItem._checksumHeader = oldRecord._checksumHeader;
+        if (newItem._size != oldRecord._fileSize) {
+            qCWarning(lcPropagateRemoteMove) << "File sizes differ on server vs sync journal: " << newItem._size << oldRecord._fileSize;
 
             // the server might have claimed a different size, we take the old one from the DB
-            record._fileSize = oldRecord._fileSize;
+            newItem._size = oldRecord._fileSize;
         }
     }
-
-    if (!propagator()->_journal->setFileRecord(record)) {
+    if (!propagator()->updateMetadata(newItem)) {
         done(SyncFileItem::FatalError, tr("Error writing metadata to the database"));
+        return;
+    }
+    if (pinState && *pinState != PinState::Inherited
+        && !vfs->setPinState(newItem._renameTarget, *pinState)) {
+        done(SyncFileItem::NormalError, tr("Error setting pin state"));
         return;
     }
 
     if (_item->isDirectory()) {
+        propagator()->_renamedDirectories.insert(_item->_file, _item->_renameTarget);
         if (!adjustSelectiveSync(propagator()->_journal, _item->_file, _item->_renameTarget)) {
             done(SyncFileItem::FatalError, tr("Error writing metadata to the database"));
             return;
@@ -180,7 +276,7 @@ void PropagateRemoteMove::finalize()
 
 bool PropagateRemoteMove::adjustSelectiveSync(SyncJournalDb *journal, const QString &from_, const QString &to_)
 {
-    bool ok;
+    bool ok = false;
     // We only care about preserving the blacklist.   The white list should anyway be empty.
     // And the undecided list will be repopulated on the next sync, if there is anything too big.
     QStringList list = journal->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, &ok);
@@ -193,9 +289,9 @@ bool PropagateRemoteMove::adjustSelectiveSync(SyncJournalDb *journal, const QStr
     QString from = from_ + QLatin1String("/");
     QString to = to_ + QLatin1String("/");
 
-    for (auto it = list.begin(); it != list.end(); ++it) {
-        if (it->startsWith(from)) {
-            *it = it->replace(0, from.size(), to);
+    for (auto &s : list) {
+        if (s.startsWith(from)) {
+            s = s.replace(0, from.size(), to);
             changed = true;
         }
     }

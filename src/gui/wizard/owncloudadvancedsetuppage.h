@@ -25,6 +25,8 @@ class QProgressIndicator;
 
 namespace OCC {
 
+class OwncloudWizard;
+
 /**
  * @brief The OwncloudAdvancedSetupPage class
  * @ingroup gui
@@ -33,7 +35,7 @@ class OwncloudAdvancedSetupPage : public QWizardPage
 {
     Q_OBJECT
 public:
-    OwncloudAdvancedSetupPage();
+    OwncloudAdvancedSetupPage(OwncloudWizard *wizard);
 
     bool isComplete() const override;
     void initializePage() override;
@@ -41,6 +43,7 @@ public:
     bool validatePage() override;
     QString localFolder() const;
     QStringList selectiveSyncBlacklist() const;
+    bool useVirtualFileSync() const;
     bool isConfirmBigFolderChecked() const;
     void setRemoteFolder(const QString &remoteFolder);
     void setMultipleFoldersExist(bool exist);
@@ -51,14 +54,18 @@ signals:
 
 public slots:
     void setErrorString(const QString &);
+    void slotStyleChanged();
 
 private slots:
     void slotSelectFolder();
     void slotSyncEverythingClicked();
     void slotSelectiveSyncClicked();
+    void slotVirtualFileSyncClicked();
     void slotQuotaRetrieved(const QVariantMap &result);
 
 private:
+    void setRadioChecked(QRadioButton *radio);
+
     void setupCustomization();
     void updateStatus();
     bool dataChanged();
@@ -67,16 +74,26 @@ private:
     QUrl serverUrl() const;
     qint64 availableLocalSpace() const;
     QString checkLocalSpace(qint64 remoteSize) const;
+    void customizeStyle();
+    void setServerAddressLabelUrl(const QUrl &url);
+    void setLocalFolderPushButtonPath(const QString &path);
+    void styleSyncLogo();
+    void styleLocalFolderLabel();
+    void setResolutionGuiVisible(bool value);
+    void setupResoultionWidget();
+    void fetchUserAvatar();
+    void fetchUserData();
 
     Ui_OwncloudAdvancedSetupPage _ui;
-    bool _checking;
-    bool _created;
-    bool _localFolderValid;
+    bool _checking = false;
+    bool _created = false;
+    bool _localFolderValid = false;
     QProgressIndicator *_progressIndi;
     QString _remoteFolder;
     QStringList _selectiveSyncBlacklist;
-    qint64 _rSize;
-    qint64 _rSelectedSize;
+    qint64 _rSize = -1;
+    qint64 _rSelectedSize = -1;
+    OwncloudWizard *_ocWizard;
 };
 
 } // namespace OCC

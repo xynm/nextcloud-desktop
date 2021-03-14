@@ -6,7 +6,7 @@ mkdir /app
 mkdir /build
 
 #Set Qt-5.12
-export QT_BASE_DIR=/opt/qt5.12.5
+export QT_BASE_DIR=/opt/qt5.12.9
 export QTDIR=$QT_BASE_DIR
 export PATH=$QT_BASE_DIR/bin:$PATH
 export LD_LIBRARY_PATH=$QT_BASE_DIR/lib/x86_64-linux-gnu:$QT_BASE_DIR/lib:$LD_LIBRARY_PATH
@@ -21,25 +21,24 @@ if [ $SUFFIX != "master" ]; then
     SUFFIX="PR-$SUFFIX"
 fi
 
-#QtKeyChain 0.9.1
+#QtKeyChain v0.10.0
 cd /build
 git clone https://github.com/frankosterfeld/qtkeychain.git
 cd qtkeychain
-git checkout v0.9.1
+git checkout v0.10.0
 mkdir build
 cd build
 cmake -D CMAKE_INSTALL_PREFIX=/usr ../
 make -j4
-make DESTDIR=/app install 
+make install
 
 #Build client
 cd /build
 mkdir build-client
 cd build-client
 cmake -D CMAKE_INSTALL_PREFIX=/usr \
-    -D NO_SHIBBOLETH=1 \
-    -D QTKEYCHAIN_LIBRARY=/app/usr/lib/x86_64-linux-gnu/libqt5keychain.so \
-    -D QTKEYCHAIN_INCLUDE_DIR=/app/usr/include/qt5keychain/ \
+    -D BUILD_TESTING=OFF \
+    -D BUILD_UPDATER=ON \
     -DMIRALL_VERSION_SUFFIX=PR-$DRONE_PULL_REQUEST \
     -DMIRALL_VERSION_BUILD=$DRONE_BUILD_NUMBER \
     $DRONE_WORKSPACE
@@ -49,9 +48,7 @@ make DESTDIR=/app install
 # Move stuff around
 cd /app
 
-mv ./usr/lib/x86_64-linux-gnu/nextcloud/* ./usr/lib/x86_64-linux-gnu/
 mv ./usr/lib/x86_64-linux-gnu/* ./usr/lib/
-rm -rf ./usr/lib/nextcloud
 rm -rf ./usr/lib/cmake
 rm -rf ./usr/include
 rm -rf ./usr/mkspecs
@@ -85,13 +82,13 @@ cp -P -r /usr/lib/x86_64-linux-gnu/nss ./usr/lib/
 
 # Use linuxdeployqt to deploy
 cd /build
-wget -c "https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage"
+wget --ca-directory=/etc/ssl/certs/ -c "https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage"
 chmod a+x linuxdeployqt*.AppImage
 ./linuxdeployqt-continuous-x86_64.AppImage --appimage-extract
 rm ./linuxdeployqt-continuous-x86_64.AppImage
 unset QTDIR; unset QT_PLUGIN_PATH ; unset LD_LIBRARY_PATH
 export LD_LIBRARY_PATH=/app/usr/lib/
-./squashfs-root/AppRun ${DESKTOP_FILE} -bundle-non-qt-libs
+./squashfs-root/AppRun ${DESKTOP_FILE} -bundle-non-qt-libs -qmldir=$DRONE_WORKSPACE/src/gui
 
 # Set origin
 ./squashfs-root/usr/bin/patchelf --set-rpath '$ORIGIN/' /app/usr/lib/libnextcloudsync.so.0

@@ -18,24 +18,9 @@
 
 namespace OCC {
 
-/**
- * @brief The DeleteJob class
- * @ingroup libsync
- */
-class DeleteJob : public AbstractNetworkJob
-{
-    Q_OBJECT
-    QUrl _url; // Only used if the constructor taking a url is taken.
-public:
-    explicit DeleteJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
-    explicit DeleteJob(AccountPtr account, const QUrl &url, QObject *parent = nullptr);
+class DeleteJob;
 
-    void start() override;
-    bool finished() override;
-
-signals:
-    void finishedSignal();
-};
+class AbstractPropagateRemoteDeleteEncrypted;
 
 /**
  * @brief The PropagateRemoteDelete class
@@ -45,6 +30,7 @@ class PropagateRemoteDelete : public PropagateItemJob
 {
     Q_OBJECT
     QPointer<DeleteJob> _job;
+    AbstractPropagateRemoteDeleteEncrypted *_deleteEncryptedHelper = nullptr;
 
 public:
     PropagateRemoteDelete(OwncloudPropagator *propagator, const SyncFileItemPtr &item)

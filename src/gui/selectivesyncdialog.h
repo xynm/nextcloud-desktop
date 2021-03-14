@@ -59,6 +59,7 @@ private slots:
     void slotItemExpanded(QTreeWidgetItem *);
     void slotItemChanged(QTreeWidgetItem *, int);
     void slotLscolFinishedWithError(QNetworkReply *);
+    void slotGatherEncryptedPaths(const QString &, const QMap<QString, QString> &);
 
 private:
     void refreshFolders();
@@ -78,6 +79,8 @@ private:
     // During account setup we want to filter out excluded folders from the
     // view without having a Folder.SyncEngine.ExcludedFiles instance.
     ExcludedFiles _excludedFiles;
+
+    QStringList _encryptedPaths;
 };
 
 /**
@@ -89,10 +92,10 @@ class SelectiveSyncDialog : public QDialog
     Q_OBJECT
 public:
     // Dialog for a specific folder (used from the account settings button)
-    explicit SelectiveSyncDialog(AccountPtr account, Folder *folder, QWidget *parent = nullptr, Qt::WindowFlags f = nullptr);
+    explicit SelectiveSyncDialog(AccountPtr account, Folder *folder, QWidget *parent = nullptr, Qt::WindowFlags f = {});
 
     // Dialog for the whole account (Used from the wizard)
-    explicit SelectiveSyncDialog(AccountPtr account, const QString &folder, const QStringList &blacklist, QWidget *parent = nullptr, Qt::WindowFlags f = nullptr);
+    explicit SelectiveSyncDialog(AccountPtr account, const QString &folder, const QStringList &blacklist, QWidget *parent = nullptr, Qt::WindowFlags f = {});
 
     void accept() override;
 

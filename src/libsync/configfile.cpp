@@ -16,10 +16,13 @@
 
 #include "configfile.h"
 #include "theme.h"
+#include "version.h"
 #include "common/utility.h"
 #include "common/asserts.h"
+#include "version.h"
 
 #include "creds/abstractcredentials.h"
+#include "creds/keychainchunk.h"
 
 #include "csync_exclude.h"
 
@@ -50,7 +53,7 @@ namespace OCC {
 
 namespace chrono = std::chrono;
 
-Q_LOGGING_CATEGORY(lcConfigFile, "sync.configfile", QtInfoMsg)
+Q_LOGGING_CATEGORY(lcConfigFile, "nextcloud.sync.configfile", QtInfoMsg)
 
 //static const char caCertsKeyC[] = "CaCertificates"; only used from account.cpp
 static const char remotePollIntervalC[] = "remotePollInterval";
@@ -63,7 +66,10 @@ static const char crashReporterC[] = "crashReporter";
 static const char optionalServerNotificationsC[] = "optionalServerNotifications";
 static const char showInExplorerNavigationPaneC[] = "showInExplorerNavigationPane";
 static const char skipUpdateCheckC[] = "skipUpdateCheck";
+static const char autoUpdateCheckC[] = "autoUpdateCheck";
 static const char updateCheckIntervalC[] = "updateCheckInterval";
+static const char updateSegmentC[] = "updateSegment";
+static const char updateChannelC[] = "updateChannel";
 static const char geometryC[] = "geometry";
 static const char timeoutC[] = "timeout";
 static const char chunkSizeC[] = "chunkSize";
@@ -71,6 +77,12 @@ static const char minChunkSizeC[] = "minChunkSize";
 static const char maxChunkSizeC[] = "maxChunkSize";
 static const char targetChunkUploadDurationC[] = "targetChunkUploadDuration";
 static const char automaticLogDirC[] = "logToTemporaryLogDir";
+static const char logDirC[] = "logDir";
+static const char logDebugC[] = "logDebug";
+static const char logExpireC[] = "logExpire";
+static const char logFlushC[] = "logFlush";
+static const char showExperimentalOptionsC[] = "showExperimentalOptions";
+static const char clientVersionC[] = "clientVersion";
 
 static const char proxyHostC[] = "Proxy/host";
 static const char proxyTypeC[] = "Proxy/type";
@@ -89,7 +101,6 @@ static const char useNewBigFolderSizeLimitC[] = "useNewBigFolderSizeLimit";
 static const char confirmExternalStorageC[] = "confirmExternalStorage";
 static const char moveToTrashC[] = "moveToTrash";
 
-static const char maxLogLinesC[] = "Logging/maxLogLines";
 
 const char certPath[] = "http_certificatePath";
 const char certPasswd[] = "http_certificatePasswd";
@@ -206,19 +217,19 @@ int ConfigFile::timeout() const
     return settings.value(QLatin1String(timeoutC), 300).toInt(); // default to 5 min
 }
 
-quint64 ConfigFile::chunkSize() const
+qint64 ConfigFile::chunkSize() const
 {
     QSettings settings(configFile(), QSettings::IniFormat);
     return settings.value(QLatin1String(chunkSizeC), 10 * 1000 * 1000).toLongLong(); // default to 10 MB
 }
 
-quint64 ConfigFile::maxChunkSize() const
+qint64 ConfigFile::maxChunkSize() const
 {
     QSettings settings(configFile(), QSettings::IniFormat);
     return settings.value(QLatin1String(maxChunkSizeC), 100 * 1000 * 1000).toLongLong(); // default to 100 MB
 }
 
-quint64 ConfigFile::minChunkSize() const
+qint64 ConfigFile::minChunkSize() const
 {
     QSettings settings(configFile(), QSettings::IniFormat);
     return settings.value(QLatin1String(minChunkSizeC), 1000 * 1000).toLongLong(); // default to 1 MB
@@ -286,15 +297,15 @@ QVariant ConfigFile::getPolicySetting(const QString &setting, const QVariant &de
 {
     if (Utility::isWindows()) {
         // check for policies first and return immediately if a value is found.
-        QSettings userPolicy(QString::fromLatin1("HKEY_CURRENT_USER\\Software\\Policies\\%1\\%2")
-                                 .arg(APPLICATION_VENDOR, Theme::instance()->appName()),
+        QSettings userPolicy(QString::fromLatin1(R"(HKEY_CURRENT_USER\Software\Policies\%1\%2)")
+                                 .arg(APPLICATION_VENDOR, Theme::instance()->appNameGUI()),
             QSettings::NativeFormat);
         if (userPolicy.contains(setting)) {
             return userPolicy.value(setting);
         }
 
-        QSettings machinePolicy(QString::fromLatin1("HKEY_LOCAL_MACHINE\\Software\\Policies\\%1\\%2")
-                                    .arg(APPLICATION_VENDOR, APPLICATION_NAME),
+        QSettings machinePolicy(QString::fromLatin1(R"(HKEY_LOCAL_MACHINE\Software\Policies\%1\%2)")
+                                    .arg(APPLICATION_VENDOR, Theme::instance()->appNameGUI()),
             QSettings::NativeFormat);
         if (machinePolicy.contains(setting)) {
             return machinePolicy.value(setting);
@@ -399,6 +410,28 @@ QString ConfigFile::excludeFileFromSystem()
 #endif
 
     return fi.absoluteFilePath();
+}
+
+QString ConfigFile::backup() const
+{
+    QString baseFile = configFile();
+    auto versionString = clientVersionString();
+    if (!versionString.isEmpty())
+        versionString.prepend('_');
+    QString backupFile =
+        QString("%1.backup_%2%3")
+            .arg(baseFile)
+            .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"))
+            .arg(versionString);
+
+    // If this exact file already exists it's most likely that a backup was
+    // already done. (two backup calls directly after each other, potentially
+    // even with source alterations in between!)
+    if (!QFile::exists(backupFile)) {
+        QFile f(baseFile);
+        f.copy(backupFile);
+    }
+    return backupFile;
 }
 
 QString ConfigFile::configFile() const
@@ -576,17 +609,67 @@ void ConfigFile::setSkipUpdateCheck(bool skip, const QString &connection)
     settings.sync();
 }
 
-int ConfigFile::maxLogLines() const
+bool ConfigFile::autoUpdateCheck(const QString &connection) const
 {
-    QSettings settings(configFile(), QSettings::IniFormat);
-    return settings.value(QLatin1String(maxLogLinesC), DEFAULT_MAX_LOG_LINES).toInt();
+    QString con(connection);
+    if (connection.isEmpty())
+        con = defaultConnection();
+
+    QVariant fallback = getValue(QLatin1String(autoUpdateCheckC), con, true);
+    fallback = getValue(QLatin1String(autoUpdateCheckC), QString(), fallback);
+
+    QVariant value = getPolicySetting(QLatin1String(autoUpdateCheckC), fallback);
+    return value.toBool();
 }
 
-void ConfigFile::setMaxLogLines(int lines)
+void ConfigFile::setAutoUpdateCheck(bool autoCheck, const QString &connection)
+{
+    QString con(connection);
+    if (connection.isEmpty())
+        con = defaultConnection();
+
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.beginGroup(con);
+
+    settings.setValue(QLatin1String(autoUpdateCheckC), QVariant(autoCheck));
+    settings.sync();
+}
+
+int ConfigFile::updateSegment() const
 {
     QSettings settings(configFile(), QSettings::IniFormat);
-    settings.setValue(QLatin1String(maxLogLinesC), lines);
-    settings.sync();
+    int segment = settings.value(QLatin1String(updateSegmentC), -1).toInt();
+
+    // Invalid? (Unset at the very first launch)
+    if(segment < 0 || segment > 99) {
+        // Save valid segment value, normally has to be done only once.
+        segment = qrand() % 99;
+        settings.setValue(QLatin1String(updateSegmentC), segment);
+    }
+
+    return segment;
+}
+
+QString ConfigFile::updateChannel() const
+{
+    QString defaultUpdateChannel = QStringLiteral("stable");
+    QString suffix = QString::fromLatin1(MIRALL_STRINGIFY(MIRALL_VERSION_SUFFIX));
+    if (suffix.startsWith("daily")
+        || suffix.startsWith("nightly")
+        || suffix.startsWith("alpha")
+        || suffix.startsWith("rc")
+        || suffix.startsWith("beta")) {
+        defaultUpdateChannel = QStringLiteral("beta");
+    }
+
+    QSettings settings(configFile(), QSettings::IniFormat);
+    return settings.value(QLatin1String(updateChannelC), defaultUpdateChannel).toString();
+}
+
+void ConfigFile::setUpdateChannel(const QString &channel)
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.setValue(QLatin1String(updateChannelC), channel);
 }
 
 void ConfigFile::setProxyType(int proxyType,
@@ -604,7 +687,22 @@ void ConfigFile::setProxyType(int proxyType,
         settings.setValue(QLatin1String(proxyPortC), port);
         settings.setValue(QLatin1String(proxyNeedsAuthC), needsAuth);
         settings.setValue(QLatin1String(proxyUserC), user);
-        settings.setValue(QLatin1String(proxyPassC), pass.toUtf8().toBase64());
+
+        if (pass.isEmpty()) {
+            // Security: Don't keep password in config file
+            settings.remove(QLatin1String(proxyPassC));
+
+            // Delete password from keychain
+            auto job = new KeychainChunk::DeleteJob(keychainProxyPasswordKey());
+            job->exec();
+        } else {
+            // Write password to keychain
+            auto job = new KeychainChunk::WriteJob(keychainProxyPasswordKey(), pass.toUtf8());
+            if (job->exec()) {
+                // Security: Don't keep password in config file
+                settings.remove(QLatin1String(proxyPassC));
+            }
+        }
     }
     settings.sync();
 }
@@ -626,8 +724,8 @@ QVariant ConfigFile::getValue(const QString &param, const QString &group,
         }
         systemSetting = systemSettings.value(param, defaultValue);
     } else { // Windows
-        QSettings systemSettings(QString::fromLatin1("HKEY_LOCAL_MACHINE\\Software\\%1\\%2")
-                                     .arg(APPLICATION_VENDOR, Theme::instance()->appName()),
+        QSettings systemSettings(QString::fromLatin1(R"(HKEY_LOCAL_MACHINE\Software\%1\%2)")
+                                     .arg(APPLICATION_VENDOR, Theme::instance()->appNameGUI()),
             QSettings::NativeFormat);
         if (!group.isEmpty()) {
             systemSettings.beginGroup(group);
@@ -679,8 +777,34 @@ QString ConfigFile::proxyUser() const
 
 QString ConfigFile::proxyPassword() const
 {
-    QByteArray pass = getValue(proxyPassC).toByteArray();
-    return QString::fromUtf8(QByteArray::fromBase64(pass));
+    QByteArray passEncoded = getValue(proxyPassC).toByteArray();
+    auto pass = QString::fromUtf8(QByteArray::fromBase64(passEncoded));
+    passEncoded.clear();
+
+    const auto key = keychainProxyPasswordKey();
+
+    if (!pass.isEmpty()) {
+        // Security: Migrate password from config file to keychain
+        auto job = new KeychainChunk::WriteJob(key, pass.toUtf8());
+        if (job->exec()) {
+            QSettings settings(configFile(), QSettings::IniFormat);
+            settings.remove(QLatin1String(proxyPassC));
+            qCInfo(lcConfigFile()) << "Migrated proxy password to keychain";
+        }
+    } else {
+        // Read password from keychain
+        auto job = new KeychainChunk::ReadJob(key);
+        if (job->exec()) {
+            pass = job->textData();
+        }
+    }
+
+    return pass;
+}
+
+QString ConfigFile::keychainProxyPasswordKey() const
+{
+    return QString::fromLatin1("proxy-password");
 }
 
 int ConfigFile::useUploadLimit() const
@@ -723,15 +847,16 @@ void ConfigFile::setDownloadLimit(int kbytes)
     setValue(downloadLimitC, kbytes);
 }
 
-QPair<bool, quint64> ConfigFile::newBigFolderSizeLimit() const
+QPair<bool, qint64> ConfigFile::newBigFolderSizeLimit() const
 {
     auto defaultValue = Theme::instance()->newBigFolderSizeLimit();
-    qint64 value = getValue(newBigFolderSizeLimitC, QString(), defaultValue).toLongLong();
-    bool use = value >= 0 && getValue(useNewBigFolderSizeLimitC, QString(), true).toBool();
-    return qMakePair(use, quint64(qMax<qint64>(0, value)));
+    const auto fallback = getValue(newBigFolderSizeLimitC, QString(), defaultValue).toLongLong();
+    const auto value = getPolicySetting(QLatin1String(newBigFolderSizeLimitC), fallback).toLongLong();
+    const bool use = value >= 0 && useNewBigFolderSizeLimit();
+    return qMakePair(use, qMax<qint64>(0, value));
 }
 
-void ConfigFile::setNewBigFolderSizeLimit(bool isChecked, quint64 mbytes)
+void ConfigFile::setNewBigFolderSizeLimit(bool isChecked, qint64 mbytes)
 {
     setValue(newBigFolderSizeLimitC, mbytes);
     setValue(useNewBigFolderSizeLimitC, isChecked);
@@ -739,7 +864,14 @@ void ConfigFile::setNewBigFolderSizeLimit(bool isChecked, quint64 mbytes)
 
 bool ConfigFile::confirmExternalStorage() const
 {
-    return getValue(confirmExternalStorageC, QString(), true).toBool();
+    const auto fallback = getValue(confirmExternalStorageC, QString(), true);
+    return getPolicySetting(QLatin1String(confirmExternalStorageC), fallback).toBool();
+}
+
+bool ConfigFile::useNewBigFolderSizeLimit() const
+{
+    const auto fallback = getValue(useNewBigFolderSizeLimitC, QString(), true);
+    return getPolicySetting(QLatin1String(useNewBigFolderSizeLimitC), fallback).toBool();
 }
 
 void ConfigFile::setConfirmExternalStorage(bool isChecked)
@@ -775,7 +907,7 @@ bool ConfigFile::monoIcons() const
     bool monoDefault = false; // On Mac we want bw by default
 #ifdef Q_OS_MAC
     // OEM themes are not obliged to ship mono icons
-    monoDefault = (0 == (strcmp("ownCloud", APPLICATION_NAME)));
+    monoDefault = QByteArrayLiteral("Nextcloud") == QByteArrayLiteral(APPLICATION_NAME);
 #endif
     return settings.value(QLatin1String(monoIconsC), monoDefault).toBool();
 }
@@ -789,7 +921,8 @@ void ConfigFile::setMonoIcons(bool useMonoIcons)
 bool ConfigFile::crashReporter() const
 {
     QSettings settings(configFile(), QSettings::IniFormat);
-    return settings.value(QLatin1String(crashReporterC), true).toBool();
+    const auto fallback = settings.value(QLatin1String(crashReporterC), true);
+    return getPolicySetting(QLatin1String(crashReporterC), fallback).toBool();
 }
 
 void ConfigFile::setCrashReporter(bool enabled)
@@ -808,6 +941,61 @@ void ConfigFile::setAutomaticLogDir(bool enabled)
 {
     QSettings settings(configFile(), QSettings::IniFormat);
     settings.setValue(QLatin1String(automaticLogDirC), enabled);
+}
+
+QString ConfigFile::logDir() const
+{
+    const auto defaultLogDir = QString(configPath() + QStringLiteral("/logs"));
+    QSettings settings(configFile(), QSettings::IniFormat);
+    return settings.value(QLatin1String(logDirC), defaultLogDir).toString();
+}
+
+void ConfigFile::setLogDir(const QString &dir)
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.setValue(QLatin1String(logDirC), dir);
+}
+
+bool ConfigFile::logDebug() const
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    return settings.value(QLatin1String(logDebugC), true).toBool();
+}
+
+void ConfigFile::setLogDebug(bool enabled)
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.setValue(QLatin1String(logDebugC), enabled);
+}
+
+int ConfigFile::logExpire() const
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    return settings.value(QLatin1String(logExpireC), 24).toInt();
+}
+
+void ConfigFile::setLogExpire(int hours)
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.setValue(QLatin1String(logExpireC), hours);
+}
+
+bool ConfigFile::logFlush() const
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    return settings.value(QLatin1String(logFlushC), false).toBool();
+}
+
+void ConfigFile::setLogFlush(bool enabled)
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.setValue(QLatin1String(logFlushC), enabled);
+}
+
+bool ConfigFile::showExperimentalOptions() const
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    return settings.value(QLatin1String(showExperimentalOptionsC), false).toBool();
 }
 
 QString ConfigFile::certificatePath() const
@@ -832,6 +1020,18 @@ void ConfigFile::setCertificatePasswd(const QString &cPasswd)
     QSettings settings(configFile(), QSettings::IniFormat);
     settings.setValue(QLatin1String(certPasswd), cPasswd);
     settings.sync();
+}
+
+QString ConfigFile::clientVersionString() const
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    return settings.value(QLatin1String(clientVersionC), QString()).toString();
+}
+
+void ConfigFile::setClientVersionString(const QString &version)
+{
+    QSettings settings(configFile(), QSettings::IniFormat);
+    settings.setValue(QLatin1String(clientVersionC), version);
 }
 
 Q_GLOBAL_STATIC(QString, g_configFileName)

@@ -18,7 +18,7 @@
 
 // #include "ownsql.h"
 #include "syncfileitem.h"
-#include "syncfilestatus.h"
+#include "common/syncfilestatus.h"
 #include <map>
 #include <QSet>
 
@@ -40,6 +40,8 @@ public:
 
 public slots:
     void slotPathTouched(const QString &fileName);
+    // path relative to folder
+    void slotAddSilentlyExcluded(const QString &folderPath);
 
 signals:
     void fileStatusChanged(const QString &systemFileName, SyncFileStatus fileStatus);
@@ -54,7 +56,7 @@ private:
     struct PathComparator {
         bool operator()( const QString& lhs, const QString& rhs ) const;
     };
-    typedef std::map<QString, SyncFileStatus::SyncFileStatusTag, PathComparator> ProblemsMap;
+    using ProblemsMap = std::map<QString, SyncFileStatus::SyncFileStatusTag, PathComparator>;
     SyncFileStatus::SyncFileStatusTag lookupProblem(const QString &pathToMatch, const ProblemsMap &problemMap);
 
     enum SharedFlag { UnknownShared,

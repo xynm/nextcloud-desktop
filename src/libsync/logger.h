@@ -23,7 +23,6 @@
 #include <qmutex.h>
 
 #include "common/utility.h"
-#include "logger.h"
 #include "owncloudlib.h"
 
 namespace OCC {
@@ -47,6 +46,7 @@ public:
 
     void log(Log log);
     void doLog(const QString &log);
+    void close();
 
     static void mirallLog(const QString &message);
 
@@ -58,10 +58,14 @@ public:
     void postOptionalGuiLog(const QString &title, const QString &message);
     void postGuiMessage(const QString &title, const QString &message);
 
-    void setLogWindowActivated(bool activated);
+    QString logFile() const;
     void setLogFile(const QString &name);
+
     void setLogExpire(int expire);
+
+    QString logDir() const;
     void setLogDir(const QString &dir);
+
     void setLogFlush(bool flush);
 
     bool logDebug() const { return _logDebug; }
@@ -97,12 +101,11 @@ private:
     Logger(QObject *parent = nullptr);
     ~Logger();
     QList<Log> _logs;
-    bool _showTime;
-    bool _logWindowActivated;
+    bool _showTime = true;
     QFile _logFile;
-    bool _doFileFlush;
-    int _logExpire;
-    bool _logDebug;
+    bool _doFileFlush = false;
+    int _logExpire = 0;
+    bool _logDebug = false;
     QScopedPointer<QTextStream> _logstream;
     mutable QMutex _mutex;
     QString _logDirectory;

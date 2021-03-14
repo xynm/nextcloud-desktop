@@ -20,8 +20,20 @@
 
 #include <QVariantMap>
 #include <QStringList>
+#include <QMimeDatabase>
 
 namespace OCC {
+
+class DirectEditor;
+
+enum PushNotificationType {
+    None = 0,
+    Files = 1,
+    Activities = 2,
+    Notifications = 4
+};
+Q_DECLARE_FLAGS(PushNotificationTypes, PushNotificationType)
+Q_DECLARE_OPERATORS_FOR_FLAGS(PushNotificationTypes)
 
 /**
  * @brief The Capabilities class represents the capabilities of an ownCloud
@@ -37,12 +49,19 @@ public:
     bool sharePublicLink() const;
     bool sharePublicLinkAllowUpload() const;
     bool sharePublicLinkSupportsUploadOnly() const;
+    bool sharePublicLinkAskOptionalPassword() const;
     bool sharePublicLinkEnforcePassword() const;
     bool sharePublicLinkEnforceExpireDate() const;
     int sharePublicLinkExpireDateDays() const;
     bool sharePublicLinkMultiple() const;
     bool shareResharing() const;
     bool chunkingNg() const;
+
+    /// Returns which kind of push notfications are available
+    PushNotificationTypes availablePushNotifications() const;
+
+    /// Websocket url for files push notifications if available
+    QUrl pushNotificationsWebSocketUrl() const;
 
     /// disable parallel upload in chunking
     bool chunkingParallelUploadDisabled() const;
@@ -54,7 +73,7 @@ public:
     bool notificationsAvailable() const;
 
     /// returns true if the server supports client side encryption
-    bool clientSideEncryptionAvaliable() const;
+    bool clientSideEncryptionAvailable() const;
 
     /// returns true if the capabilities are loaded already.
     bool isValid() const;
@@ -123,13 +142,56 @@ public:
     QString invalidFilenameRegex() const;
 
     /**
+     * return the list of filename that should not be uploaded
+     */
+    QStringList blacklistedFiles() const;
+
+    /**
      * Whether conflict files should remain local (default) or should be uploaded.
      */
     bool uploadConflictFiles() const;
 
+    // Direct Editing
+    void addDirectEditor(DirectEditor* directEditor);
+    DirectEditor* getDirectEditorForMimetype(const QMimeType &mimeType);
+    DirectEditor* getDirectEditorForOptionalMimetype(const QMimeType &mimeType);
+
 private:
     QVariantMap _capabilities;
+
+    QList<DirectEditor*> _directEditors;
 };
+
+/*-------------------------------------------------------------------------------------*/
+
+class OWNCLOUDSYNC_EXPORT DirectEditor : public QObject
+{
+    Q_OBJECT
+public:
+    DirectEditor(const QString &id, const QString &name, QObject* parent = nullptr);
+
+    void addMimetype(const QByteArray &mimeType);
+    void addOptionalMimetype(const QByteArray &mimeType);
+
+    bool hasMimetype(const QMimeType &mimeType);
+    bool hasOptionalMimetype(const QMimeType &mimeType);
+
+    QString id() const;
+    QString name() const;
+
+    QList<QByteArray> mimeTypes() const;
+    QList<QByteArray> optionalMimeTypes() const;
+
+private:
+    QString _id;
+    QString _name;
+
+    QList<QByteArray> _mimeTypes;
+    QList<QByteArray> _optionalMimeTypes;
+};
+
+/*-------------------------------------------------------------------------------------*/
+
 }
 
 #endif //CAPABILITIES_H

@@ -14,64 +14,41 @@
 
 #include "propagateremotedelete.h"
 #include "propagateremotedeleteencrypted.h"
+#include "propagateremotedeleteencryptedrootfolder.h"
 #include "owncloudpropagator_p.h"
 #include "account.h"
+#include "deletejob.h"
 #include "common/asserts.h"
 
 #include <QLoggingCategory>
 
 namespace OCC {
 
-Q_LOGGING_CATEGORY(lcDeleteJob, "nextcloud.sync.networkjob.delete", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcPropagateRemoteDelete, "nextcloud.sync.propagator.remotedelete", QtInfoMsg)
-
-DeleteJob::DeleteJob(AccountPtr account, const QString &path, QObject *parent)
-    : AbstractNetworkJob(account, path, parent)
-{
-}
-
-DeleteJob::DeleteJob(AccountPtr account, const QUrl &url, QObject *parent)
-    : AbstractNetworkJob(account, QString(), parent)
-    , _url(url)
-{
-}
-
-void DeleteJob::start()
-{
-    QNetworkRequest req;
-    if (_url.isValid()) {
-        sendRequest("DELETE", _url, req);
-    } else {
-        sendRequest("DELETE", makeDavUrl(path()), req);
-    }
-
-    if (reply()->error() != QNetworkReply::NoError) {
-        qCWarning(lcDeleteJob) << " Network error: " << reply()->errorString();
-    }
-    AbstractNetworkJob::start();
-}
-
-bool DeleteJob::finished()
-{
-    qCInfo(lcDeleteJob) << "DELETE of" << reply()->request().url() << "FINISHED WITH STATUS"
-                       << replyStatusString();
-
-    emit finishedSignal();
-    return true;
-}
 
 void PropagateRemoteDelete::start()
 {
-    if (propagator()->_abortRequested.fetchAndAddRelaxed(0))
+    if (propagator()->_abortRequested)
         return;
 
-    if (!_item->_encryptedFileName.isEmpty()) {
-        auto job = new PropagateRemoteDeleteEncrypted(propagator(), _item, this);
-        connect(job, &PropagateRemoteDeleteEncrypted::finished, this, [this] (bool success) {
-            Q_UNUSED(success) // Should we skip file deletion in case of failure?
-            createDeleteJob(_item->_encryptedFileName);
+    if (!_item->_encryptedFileName.isEmpty() || _item->_isEncrypted) {
+        if (!_item->_encryptedFileName.isEmpty()) {
+            _deleteEncryptedHelper = new PropagateRemoteDeleteEncrypted(propagator(), _item, this);
+        } else {
+            _deleteEncryptedHelper = new PropagateRemoteDeleteEncryptedRootFolder(propagator(), _item, this);
+        }
+        connect(_deleteEncryptedHelper, &AbstractPropagateRemoteDeleteEncrypted::finished, this, [this] (bool success) {
+            if (!success) {
+                SyncFileItem::Status status = SyncFileItem::NormalError;
+                if (_deleteEncryptedHelper->networkError() != QNetworkReply::NoError && _deleteEncryptedHelper->networkError() != QNetworkReply::ContentNotFoundError) {
+                    status = classifyError(_deleteEncryptedHelper->networkError(), _item->_httpErrorCode, &propagator()->_anotherSyncNeeded);
+                }
+                done(status, _deleteEncryptedHelper->errorString());
+            } else {
+                done(SyncFileItem::Success);
+            }
         });
-        job->start();
+        _deleteEncryptedHelper->start();
     } else {
         createDeleteJob(_item->_file);
     }
@@ -82,8 +59,9 @@ void PropagateRemoteDelete::createDeleteJob(const QString &filename)
     qCInfo(lcPropagateRemoteDelete) << "Deleting file, local" << _item->_file << "remote" << filename;
 
     _job = new DeleteJob(propagator()->account(),
-                         propagator()->_remoteFolder + filename,
-                         this);
+        propagator()->fullRemotePath(filename),
+        this);
+
     connect(_job.data(), &DeleteJob::finishedSignal, this, &PropagateRemoteDelete::slotDeleteJobFinished);
     propagator()->_activeJobList.append(this);
     _job->start();
@@ -108,6 +86,8 @@ void PropagateRemoteDelete::slotDeleteJobFinished()
     QNetworkReply::NetworkError err = _job->reply()->error();
     const int httpStatus = _job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     _item->_httpErrorCode = httpStatus;
+    _item->_responseTimeStamp = _job->responseTimestamp();
+    _item->_requestId = _job->requestId();
 
     if (err != QNetworkReply::NoError && err != QNetworkReply::ContentNotFoundError) {
         SyncFileItem::Status status = classifyError(err, _item->_httpErrorCode,
@@ -115,8 +95,6 @@ void PropagateRemoteDelete::slotDeleteJobFinished()
         done(status, _job->errorString());
         return;
     }
-
-    _item->_responseTimeStamp = _job->responseTimestamp();
 
     // A 404 reply is also considered a success here: We want to make sure
     // a file is gone from the server. It not being there in the first place
@@ -135,6 +113,7 @@ void PropagateRemoteDelete::slotDeleteJobFinished()
 
     propagator()->_journal->deleteFileRecord(_item->_originalFile, _item->isDirectory());
     propagator()->_journal->commit("Remote Remove");
+
     done(SyncFileItem::Success);
 }
 }

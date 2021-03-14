@@ -114,7 +114,12 @@ class OWNCLOUDSYNC_EXPORT SetEncryptionFlagApiJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
-    explicit SetEncryptionFlagApiJob(const AccountPtr &account, const QByteArray& fileId, QObject *parent = nullptr);
+    enum FlagAction {
+        Clear = 0,
+        Set = 1
+    };
+
+    explicit SetEncryptionFlagApiJob(const AccountPtr &account, const QByteArray &fileId, FlagAction flagAction = Set, QObject *parent = nullptr);
 
 public slots:
     void start() override;
@@ -123,11 +128,12 @@ protected:
     bool finished() override;
 
 signals:
-    void success(const QByteArray fileId);
-    void error(const QByteArray fileId, int httpReturnCode);
+    void success(const QByteArray &fileId);
+    void error(const QByteArray &fileId, int httpReturnCode);
 
 private:
     QByteArray _fileId;
+    FlagAction _flagAction = Set;
 };
 
 class OWNCLOUDSYNC_EXPORT LockEncryptFolderApiJob : public AbstractNetworkJob
@@ -275,29 +281,6 @@ signals:
 
 private:
     QByteArray _fileId;
-};
-
-/* I cant use the propfind network job because it defaults to the
- * wrong dav url.
- */
-class OWNCLOUDSYNC_EXPORT GetFolderEncryptStatusJob : public AbstractNetworkJob
-{
-	Q_OBJECT
-public:
-	explicit GetFolderEncryptStatusJob (const AccountPtr &account, const QString& folder, QObject *parent = nullptr);
-
-public slots:
-	void start() override;
-
-protected:
-	bool finished() override;
-
-signals:
-	void encryptStatusReceived(const QMap<QString, bool> folderMetadata2EncryptionStatus);
-    void encryptStatusFolderReceived(const QString &folder, bool isEncrypted);
-	void encryptStatusError(int statusCode);
-private:
-  QString _folder;
 };
 
 }

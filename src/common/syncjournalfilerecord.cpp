@@ -21,14 +21,6 @@
 
 namespace OCC {
 
-SyncJournalFileRecord::SyncJournalFileRecord()
-    : _inode(0)
-    , _type(ItemTypeSkip)
-    , _fileSize(0)
-    , _serverHasIgnoredFiles(false)
-{
-}
-
 QByteArray SyncJournalFileRecord::numericFileId() const
 {
     // Use the id up until the first non-numeric character

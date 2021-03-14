@@ -29,20 +29,21 @@ namespace EncryptionHelper {
     QByteArray generateRandomFilename();
     QByteArray generateRandom(int size);
     QByteArray generatePassword(const QString &wordlist, const QByteArray& salt);
-    QByteArray encryptPrivateKey(
+    OWNCLOUDSYNC_EXPORT QByteArray encryptPrivateKey(
             const QByteArray& key,
             const QByteArray& privateKey,
             const QByteArray &salt
     );
-    QByteArray decryptPrivateKey(
+    OWNCLOUDSYNC_EXPORT QByteArray decryptPrivateKey(
             const QByteArray& key,
             const QByteArray& data
     );
-    QByteArray encryptStringSymmetric(
+    OWNCLOUDSYNC_EXPORT QByteArray extractPrivateKeySalt(const QByteArray &data);
+    OWNCLOUDSYNC_EXPORT QByteArray encryptStringSymmetric(
             const QByteArray& key,
             const QByteArray& data
     );
-    QByteArray decryptStringSymmetric(
+    OWNCLOUDSYNC_EXPORT QByteArray decryptStringSymmetric(
             const QByteArray& key,
             const QByteArray& data
     );
@@ -70,22 +71,15 @@ class OWNCLOUDSYNC_EXPORT ClientSideEncryption : public QObject {
     Q_OBJECT
 public:
     ClientSideEncryption();
-    void initialize();
-    void setAccount(AccountPtr account);
-    bool hasPrivateKey() const;
-    bool hasPublicKey() const;
-    void generateKeyPair();
-    void generateCSR(EVP_PKEY *keyPair);
-    void encryptPrivateKey();
-    void setTokenForFolder(const QByteArray& folder, const QByteArray& token);
-    QByteArray tokenForFolder(const QByteArray& folder) const;
-    void fetchFolderEncryptedStatus();
+    void initialize(const AccountPtr &account);
 
-    // to be used together with FolderStatusModel::FolderInfo::_path.
-    bool isFolderEncrypted(const QString& path) const;
-    void setFolderEncryptedStatus(const QString& path, bool status);
+private:
+    void generateKeyPair(const AccountPtr &account);
+    void generateCSR(const AccountPtr &account, EVP_PKEY *keyPair);
+    void encryptPrivateKey(const AccountPtr &account);
 
-    void forgetSensitiveData();
+public:
+    void forgetSensitiveData(const AccountPtr &account);
 
     bool newMnemonicGenerated() const;
 
@@ -93,9 +87,6 @@ public slots:
     void slotRequestMnemonic();
 
 private slots:
-    void folderEncryptedStatusFetched(const QMap<QString, bool> &values);
-    void folderEncryptedStatusError(int error);
-
     void publicKeyFetched(QKeychain::Job *incoming);
     void privateKeyFetched(QKeychain::Job *incoming);
     void mnemonicKeyFetched(QKeychain::Job *incoming);
@@ -106,22 +97,17 @@ signals:
     void showMnemonic(const QString& mnemonic);
 
 private:
-    void getPrivateKeyFromServer();
-    void getPublicKeyFromServer();
-    void decryptPrivateKey(const QByteArray &key);
+    void getPrivateKeyFromServer(const AccountPtr &account);
+    void getPublicKeyFromServer(const AccountPtr &account);
+    void decryptPrivateKey(const AccountPtr &account, const QByteArray &key);
 
-    void fetchFromKeyChain();
+    void fetchFromKeyChain(const AccountPtr &account);
 
-    void writePrivateKey();
-    void writeCertificate();
-    void writeMnemonic();
+    void writePrivateKey(const AccountPtr &account);
+    void writeCertificate(const AccountPtr &account);
+    void writeMnemonic(const AccountPtr &account);
 
-    AccountPtr _account;
     bool isInitialized = false;
-    bool _refreshingEncryptionStatus = false;
-    //TODO: Save this on disk.
-    QMap<QByteArray, QByteArray> _folder2token;
-    QMap<QString, bool> _folder2encryptedStatus;
 
 public:
     //QSslKey _privateKey;
@@ -150,6 +136,7 @@ public:
     QByteArray encryptedMetadata();
     void addEncryptedFile(const EncryptedFile& f);
     void removeEncryptedFile(const EncryptedFile& f);
+    void removeAllEncryptedFiles();
     QVector<EncryptedFile> files() const;
 
 

@@ -36,12 +36,12 @@
 #if defined(Q_OS_WIN)
 #include <QLibrary>
 #include <qt_windows.h>
-typedef BOOL(WINAPI*PProcessIdToSessionId)(DWORD,DWORD*);
+using PProcessIdToSessionId = BOOL (WINAPI*)(DWORD, DWORD*);
 static PProcessIdToSessionId pProcessIdToSessionId = 0;
 #endif
 
 #if defined(Q_OS_UNIX)
-#include <time.h>
+#include <ctime>
 #include <unistd.h>
 #endif
 
@@ -123,7 +123,7 @@ bool QtLocalPeer::sendMessage(const QString &message, int timeout, bool block)
         Sleep(DWORD(ms));
 #else
         struct timespec ts = { ms / 1000, (ms % 1000) * 1000 * 1000 };
-        nanosleep(&ts, NULL);
+        nanosleep(&ts, nullptr);
 #endif
     }
     if (!connOk)
@@ -154,7 +154,7 @@ void QtLocalPeer::receiveConnection()
     }
     QDataStream ds(socket);
     QByteArray uMsg;
-    quint32 remaining;
+    quint32 remaining = 0;
     ds >> remaining;
     uMsg.resize(remaining);
     int got = 0;

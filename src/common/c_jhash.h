@@ -24,7 +24,11 @@
 #ifndef _C_JHASH_H
 #define _C_JHASH_H
 
-#include <stdint.h>
+#include <stdint.h> // NOLINT
+#include <QtCore/qglobal.h>
+#ifndef Q_FALLTHROUGH
+#define Q_FALLTHROUGH() // Was added in Qt 5.8
+#endif
 
 #define c_hashsize(n) ((uint8_t) 1 << (n))
 #define c_hashmask(n) (xhashsize(n) - 1)
@@ -39,7 +43,7 @@
  * have at least 1/4 probability of changing.
  * If _c_mix() is run forward, every bit of c will change between 1/3 and
  * 2/3 of the time.  (Well, 22/100 and 78/100 for some 2-bit deltas.)
- * _c_mix() was built out of 36 single-cycle latency instructions in a 
+ * _c_mix() was built out of 36 single-cycle latency instructions in a
  * structure that could supported 2x parallelism, like so:
  *     a -= b;
  *     a -= c; x = (c>>13);
@@ -57,15 +61,15 @@
  */
 #define _c_mix(a,b,c) \
 { \
-  a -= b; a -= c; a ^= (c>>13); \
-  b -= c; b -= a; b ^= (a<<8); \
-  c -= a; c -= b; c ^= (b>>13); \
-  a -= b; a -= c; a ^= (c>>12);  \
-  b -= c; b -= a; b ^= (a<<16); \
-  c -= a; c -= b; c ^= (b>>5); \
-  a -= b; a -= c; a ^= (c>>3);  \
-  b -= c; b -= a; b ^= (a<<10); \
-  c -= a; c -= b; c ^= (b>>15); \
+  (a) -= (b); (a) -= (c); (a) ^= ((c)>>13); \
+  (b) -= (c); (b) -= (a); (b) ^= ((a)<<8); \
+  (c) -= (a); (c) -= (b); (c) ^= ((b)>>13); \
+  (a) -= (b); (a) -= (c); (a) ^= ((c)>>12);  \
+  (b) -= (c); (b) -= (a); (b) ^= ((a)<<16); \
+  (c) -= (a); (c) -= (b); (c) ^= ((b)>>5); \
+  (a) -= (b); (a) -= (c); (a) ^= ((c)>>3);  \
+  (b) -= (c); (b) -= (a); (b) ^= ((a)<<10); \
+  (c) -= (a); (c) -= (b); (c) ^= ((b)>>15); \
 }
 
 /**
@@ -88,18 +92,18 @@
  */
 #define _c_mix64(a,b,c) \
 { \
-  a -= b; a -= c; a ^= (c>>43); \
-  b -= c; b -= a; b ^= (a<<9); \
-  c -= a; c -= b; c ^= (b>>8); \
-  a -= b; a -= c; a ^= (c>>38); \
-  b -= c; b -= a; b ^= (a<<23); \
-  c -= a; c -= b; c ^= (b>>5); \
-  a -= b; a -= c; a ^= (c>>35); \
-  b -= c; b -= a; b ^= (a<<49); \
-  c -= a; c -= b; c ^= (b>>11); \
-  a -= b; a -= c; a ^= (c>>12); \
-  b -= c; b -= a; b ^= (a<<18); \
-  c -= a; c -= b; c ^= (b>>22); \
+  (a) -= (b); (a) -= (c); (a) ^= ((c)>>43); \
+  (b) -= (c); (b) -= (a); (b) ^= ((a)<<9); \
+  (c) -= (a); (c) -= (b); (c) ^= ((b)>>8); \
+  (a) -= (b); (a) -= (c); (a) ^= ((c)>>38); \
+  (b) -= (c); (b) -= (a); (b) ^= ((a)<<23); \
+  (c) -= (a); (c) -= (b); (c) ^= ((b)>>5); \
+  (a) -= (b); (a) -= (c); (a) ^= ((c)>>35); \
+  (b) -= (c); (b) -= (a); (b) ^= ((a)<<49); \
+  (c) -= (a); (c) -= (b); (c) ^= ((b)>>11); \
+  (a) -= (b); (a) -= (c); (a) ^= ((c)>>12); \
+  (b) -= (c); (b) -= (a); (b) ^= ((a)<<18); \
+  (c) -= (a); (c) -= (b); (c) ^= ((b)>>22); \
 }
 
 /**
@@ -125,7 +129,10 @@
  *            avalanche. About 36+6len instructions.
  */
 static inline uint32_t c_jhash(const uint8_t *k, uint32_t length, uint32_t initval) {
-   uint32_t a,b,c,len;
+   uint32_t a = 0;
+   uint32_t b = 0;
+   uint32_t c = 0;
+   uint32_t len = 0;
 
    /* Set up the internal state */
    len = length;
@@ -184,7 +191,10 @@ static inline uint32_t c_jhash(const uint8_t *k, uint32_t length, uint32_t initv
  *            achieves avalanche. About 41+5len instructions.
  */
 static inline uint64_t c_jhash64(const uint8_t *k, uint64_t length, uint64_t intval) {
-  uint64_t a,b,c,len;
+  uint64_t a = 0;
+  uint64_t b = 0;
+  uint64_t c = 0;
+  uint64_t len = 0;
 
   /* Set up the internal state */
   len = length;
@@ -207,33 +217,29 @@ static inline uint64_t c_jhash64(const uint8_t *k, uint64_t length, uint64_t int
   /* handle the last 23 bytes */
   c += length;
   switch(len) {
-// pragma only for GCC (and clang continues to pretend to be it by defining __GNUC__)
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
-#endif
-    case 23: c+=((uint64_t)k[22]<<56);
-    case 22: c+=((uint64_t)k[21]<<48);
-    case 21: c+=((uint64_t)k[20]<<40);
-    case 20: c+=((uint64_t)k[19]<<32);
-    case 19: c+=((uint64_t)k[18]<<24);
-    case 18: c+=((uint64_t)k[17]<<16);
-    case 17: c+=((uint64_t)k[16]<<8);
+    case 23: c+=((uint64_t)k[22]<<56); Q_FALLTHROUGH();
+    case 22: c+=((uint64_t)k[21]<<48); Q_FALLTHROUGH();
+    case 21: c+=((uint64_t)k[20]<<40); Q_FALLTHROUGH();
+    case 20: c+=((uint64_t)k[19]<<32); Q_FALLTHROUGH();
+    case 19: c+=((uint64_t)k[18]<<24); Q_FALLTHROUGH();
+    case 18: c+=((uint64_t)k[17]<<16); Q_FALLTHROUGH();
+    case 17: c+=((uint64_t)k[16]<<8);  Q_FALLTHROUGH();
     /* the first byte of c is reserved for the length */
-    case 16: b+=((uint64_t)k[15]<<56);
-    case 15: b+=((uint64_t)k[14]<<48);
-    case 14: b+=((uint64_t)k[13]<<40);
-    case 13: b+=((uint64_t)k[12]<<32);
-    case 12: b+=((uint64_t)k[11]<<24);
-    case 11: b+=((uint64_t)k[10]<<16);
-    case 10: b+=((uint64_t)k[ 9]<<8);
-    case  9: b+=((uint64_t)k[ 8]);
-    case  8: a+=((uint64_t)k[ 7]<<56);
-    case  7: a+=((uint64_t)k[ 6]<<48);
-    case  6: a+=((uint64_t)k[ 5]<<40);
-    case  5: a+=((uint64_t)k[ 4]<<32);
-    case  4: a+=((uint64_t)k[ 3]<<24);
-    case  3: a+=((uint64_t)k[ 2]<<16);
-    case  2: a+=((uint64_t)k[ 1]<<8);
+    case 16: b+=((uint64_t)k[15]<<56); Q_FALLTHROUGH();
+    case 15: b+=((uint64_t)k[14]<<48); Q_FALLTHROUGH();
+    case 14: b+=((uint64_t)k[13]<<40); Q_FALLTHROUGH();
+    case 13: b+=((uint64_t)k[12]<<32); Q_FALLTHROUGH();
+    case 12: b+=((uint64_t)k[11]<<24); Q_FALLTHROUGH();
+    case 11: b+=((uint64_t)k[10]<<16); Q_FALLTHROUGH();
+    case 10: b+=((uint64_t)k[ 9]<<8);  Q_FALLTHROUGH();
+    case  9: b+=((uint64_t)k[ 8]);     Q_FALLTHROUGH();
+    case  8: a+=((uint64_t)k[ 7]<<56); Q_FALLTHROUGH();
+    case  7: a+=((uint64_t)k[ 6]<<48); Q_FALLTHROUGH();
+    case  6: a+=((uint64_t)k[ 5]<<40); Q_FALLTHROUGH();
+    case  5: a+=((uint64_t)k[ 4]<<32); Q_FALLTHROUGH();
+    case  4: a+=((uint64_t)k[ 3]<<24); Q_FALLTHROUGH();
+    case  3: a+=((uint64_t)k[ 2]<<16); Q_FALLTHROUGH();
+    case  2: a+=((uint64_t)k[ 1]<<8);  Q_FALLTHROUGH();
     case  1: a+=((uint64_t)k[ 0]);
     /* case 0: nothing left to add */
   }

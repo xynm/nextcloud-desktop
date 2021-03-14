@@ -24,6 +24,7 @@
 #include <QNetworkAccessManager>
 #include <QPropertyAnimation>
 #include <QGraphicsPixmapItem>
+#include <QBuffer>
 
 #include "QProgressIndicator.h"
 
@@ -39,32 +40,29 @@ namespace OCC {
 
 OwncloudSetupPage::OwncloudSetupPage(QWidget *parent)
     : QWizardPage()
-    , _ui()
-    , _oCUrl()
-    , _ocUser()
-    , _authTypeKnown(false)
-    , _checking(false)
-    , _authType(DetermineAuthTypeJob::Basic)
     , _progressIndi(new QProgressIndicator(this))
+    , _ocWizard(qobject_cast<OwncloudWizard *>(parent))
 {
     _ui.setupUi(this);
-    _ocWizard = qobject_cast<OwncloudWizard *>(parent);
+
+    setupServerAddressDescriptionLabel();
 
     Theme *theme = Theme::instance();
-    setTitle(WizardCommon::titleTemplate().arg(tr("Connect to %1").arg(theme->appNameGUI())));
-    setSubTitle(WizardCommon::subTitleTemplate().arg(tr("Setup %1 server").arg(theme->appNameGUI())));
-
     if (theme->overrideServerUrl().isEmpty()) {
         _ui.leUrl->setPostfix(theme->wizardUrlPostfix());
         _ui.leUrl->setPlaceholderText(theme->wizardUrlHint());
-    } else {
+    } else if (Theme::instance()->forceOverrideServerUrl()) {
         _ui.leUrl->setEnabled(false);
     }
 
 
     registerField(QLatin1String("OCUrl*"), _ui.leUrl);
 
-    _ui.resultLayout->addWidget(_progressIndi);
+    auto sizePolicy = _progressIndi->sizePolicy();
+    sizePolicy.setRetainSizeWhenHidden(true);
+    _progressIndi->setSizePolicy(sizePolicy);
+
+    _ui.progressLayout->addWidget(_progressIndi);
     stopSpinner();
 
     setupCustomization();
@@ -74,44 +72,18 @@ OwncloudSetupPage::OwncloudSetupPage(QWidget *parent)
     connect(_ui.leUrl, &QLineEdit::editingFinished, this, &OwncloudSetupPage::slotUrlEditFinished);
 
     addCertDial = new AddCertificateDialog(this);
+    connect(addCertDial, &QDialog::accepted, this, &OwncloudSetupPage::slotCertificateAccepted);
+}
 
-#ifdef WITH_PROVIDERS
-    connect(_ui.loginButton, &QPushButton::clicked, this, &OwncloudSetupPage::slotLogin);
-    connect(_ui.createAccountButton, &QPushButton::clicked, this, &OwncloudSetupPage::slotGotoProviderList);
+void OwncloudSetupPage::setLogo()
+{
+    _ui.logoLabel->setPixmap(Theme::instance()->wizardApplicationLogo());
+}
 
-    _ui.login->hide();
-    _ui.slideShow->addSlide(Theme::hidpiFileName(":/client/theme/colored/wizard-nextcloud.png"), tr("Keep your data secure and under your control"));
-    _ui.slideShow->addSlide(Theme::hidpiFileName(":/client/theme/colored/wizard-files.png"), tr("Secure collaboration & file exchange"));
-    _ui.slideShow->addSlide(Theme::hidpiFileName(":/client/theme/colored/wizard-groupware.png"), tr("Easy-to-use web mail, calendaring & contacts"));
-    _ui.slideShow->addSlide(Theme::hidpiFileName(":/client/theme/colored/wizard-talk.png"), tr("Screensharing, online meetings & web conferences"));
-
-    connect(_ui.slideShow, &SlideShow::clicked, _ui.slideShow, &SlideShow::stopShow);
-    connect(_ui.nextButton, &QPushButton::clicked, _ui.slideShow, &SlideShow::nextSlide);
-    connect(_ui.prevButton, &QPushButton::clicked, _ui.slideShow, &SlideShow::prevSlide);
-
-	auto widgetBgLightness = OwncloudSetupPage::palette().color(OwncloudSetupPage::backgroundRole()).lightness();
-	bool widgetHasDarkBg =
-        (widgetBgLightness >= 125)
-        ? false
-        : true;
-	_ui.nextButton->setIcon(theme->uiThemeIcon(QString("control-next.svg"), widgetHasDarkBg));
-    _ui.prevButton->setIcon(theme->uiThemeIcon(QString("control-prev.svg"), widgetHasDarkBg));
-
-	// QPushButtons are a mess when it comes to consistent background coloring without stylesheets,
-	// so we do it here even though this is an exceptional styling method here
-    _ui.createAccountButton->setStyleSheet("QPushButton {background-color: #0082C9; color: white}");
-
-    _ui.slideShow->startShow();
-
-    QPalette pal = _ui.slideShow->palette();
-    pal.setColor(QPalette::WindowText, theme->wizardHeaderBackgroundColor());
-    _ui.slideShow->setPalette(pal);
-#else
-    _ui.createAccountButton->hide();
-    _ui.loginButton->hide();
-    _ui.installLink->hide();
-    _ui.slideShow->hide();
-#endif
+void OwncloudSetupPage::setupServerAddressDescriptionLabel()
+{
+    const auto appName = Theme::instance()->appNameGUI();
+    _ui.serverAddressDescriptionLabel->setText(tr("The link to your %1 web interface when you open it in the browser.", "%1 will be replaced with the application name").arg(appName));
 }
 
 void OwncloudSetupPage::setServerUrl(const QString &newUrl)
@@ -140,21 +112,17 @@ void OwncloudSetupPage::setupCustomization()
 
     variant = theme->customMedia(Theme::oCSetupBottom);
     WizardCommon::setupCustomMedia(variant, _ui.bottomLabel);
+
+    auto leUrlPalette = _ui.leUrl->palette();
+    leUrlPalette.setColor(QPalette::Text, Qt::black);
+    leUrlPalette.setColor(QPalette::Base, Qt::white);
+    _ui.leUrl->setPalette(leUrlPalette);
 }
 
 #ifdef WITH_PROVIDERS
 void OwncloudSetupPage::slotLogin()
 {
     _ocWizard->setRegistration(false);
-    _ui.login->setMaximumHeight(0);
-    QPropertyAnimation *animation = new QPropertyAnimation(_ui.login, "maximumHeight");
-    animation->setDuration(0);
-    animation->setStartValue(500);
-    animation->setEndValue(500);
-    _ui.login->show();
-    _ui.loginButton->hide();
-    wizard()->resize(wizard()->sizeHint());
-    animation->start();
 }
 void OwncloudSetupPage::slotGotoProviderList()
 {
@@ -169,6 +137,14 @@ void OwncloudSetupPage::slotGotoProviderList()
 // slot hit from textChanged of the url entry field.
 void OwncloudSetupPage::slotUrlChanged(const QString &url)
 {
+    // Need to set next button as default button here because
+    // otherwise the on OSX the next button does not stay the default
+    // button
+    auto nextButton = qobject_cast<QPushButton *>(_ocWizard->button(QWizard::NextButton));
+    if (nextButton) {
+        nextButton->setDefault(true);
+    }
+
     _authTypeKnown = false;
 
     QString newUrl = url;
@@ -190,15 +166,6 @@ void OwncloudSetupPage::slotUrlChanged(const QString &url)
     if (newUrl != url) {
         _ui.leUrl->setText(newUrl);
     }
-
-    if (!url.startsWith(QLatin1String("https://"))) {
-        _ui.urlLabel->setPixmap(QPixmap(Theme::hidpiFileName(":/client/resources/lock-http.png")));
-        _ui.urlLabel->setToolTip(tr("This url is NOT secure as it is not encrypted.\n"
-                                    "It is not advisable to use it."));
-    } else {
-        _ui.urlLabel->setPixmap(QPixmap(Theme::hidpiFileName(":/client/resources/lock-https.png")));
-        _ui.urlLabel->setToolTip(tr("This url is secure. You can use it."));
-    }
 }
 
 void OwncloudSetupPage::slotUrlEditFinished()
@@ -207,8 +174,8 @@ void OwncloudSetupPage::slotUrlEditFinished()
     if (QUrl(url).isRelative() && !url.isEmpty()) {
         // no scheme defined, set one
         url.prepend("https://");
+        _ui.leUrl->setFullText(url);
     }
-    _ui.leUrl->setFullText(url);
 }
 
 bool OwncloudSetupPage::isComplete() const
@@ -218,53 +185,38 @@ bool OwncloudSetupPage::isComplete() const
 
 void OwncloudSetupPage::initializePage()
 {
+    customizeStyle();
+
     WizardCommon::initErrorLabel(_ui.errorLabel);
 
     _authTypeKnown = false;
     _checking = false;
 
     QAbstractButton *nextButton = wizard()->button(QWizard::NextButton);
-    QPushButton *pushButton = qobject_cast<QPushButton *>(nextButton);
-    if (pushButton)
+    auto *pushButton = qobject_cast<QPushButton *>(nextButton);
+    if (pushButton) {
         pushButton->setDefault(true);
+    }
 
-    // If url is overriden by theme, it's already set and
-    // we just check the server type and switch to second page
-    // immediately.
-    if (Theme::instance()->overrideServerUrl().isEmpty()) {
-        _ui.leUrl->setFocus();
-    } else {
+    _ui.leUrl->setFocus();
+
+    const auto isServerUrlOverridden = !Theme::instance()->overrideServerUrl().isEmpty();
+    if (isServerUrlOverridden && !Theme::instance()->forceOverrideServerUrl()) {
+        // If the url is overwritten but we don't force to use that url
+        // Just focus the next button to let the user navigate quicker
+        if (nextButton) {
+            nextButton->setFocus();
+        }
+    } else if (isServerUrlOverridden) {
+        // If the overwritten url is not empty and we force this overwritten url
+        // we just check the server type and switch to next page
+        // immediately.
         setCommitPage(true);
         // Hack: setCommitPage() changes caption, but after an error this page could still be visible
         setButtonText(QWizard::CommitButton, tr("&Next >"));
         validatePage();
         setVisible(false);
     }
-    wizard()->resize(wizard()->sizeHint());
-}
-
-bool OwncloudSetupPage::urlHasChanged()
-{
-    bool change = false;
-    const QChar slash('/');
-
-    QUrl currentUrl(url());
-    QUrl initialUrl(_oCUrl);
-
-    QString currentPath = currentUrl.path();
-    QString initialPath = initialUrl.path();
-
-    // add a trailing slash.
-    if (!currentPath.endsWith(slash))
-        currentPath += slash;
-    if (!initialPath.endsWith(slash))
-        initialPath += slash;
-
-    if (currentUrl.host() != initialUrl.host() || currentUrl.port() != initialUrl.port() || currentPath != initialPath) {
-        change = true;
-    }
-
-    return change;
 }
 
 int OwncloudSetupPage::nextId() const
@@ -293,10 +245,11 @@ QString OwncloudSetupPage::url() const
 bool OwncloudSetupPage::validatePage()
 {
     if (!_authTypeKnown) {
+        slotUrlEditFinished();
         QString u = url();
         QUrl qurl(u);
         if (!qurl.isValid() || qurl.host().isEmpty()) {
-            setErrorString(tr("Invalid URL"), false);
+            setErrorString(tr("Server address does not seem to be valid"), false);
             return false;
         }
 
@@ -349,7 +302,6 @@ void OwncloudSetupPage::setErrorString(const QString &err, bool retryHTTPonly)
                 } break;
                 case OwncloudConnectionMethodDialog::Client_Side_TLS:
                     addCertDial->show();
-                    connect(addCertDial, &QDialog::accepted, this, &OwncloudSetupPage::slotCertificateAccepted);
                     break;
                 case OwncloudConnectionMethodDialog::Closed:
                 case OwncloudConnectionMethodDialog::Back:
@@ -366,21 +318,18 @@ void OwncloudSetupPage::setErrorString(const QString &err, bool retryHTTPonly)
     _checking = false;
     emit completeChanged();
     stopSpinner();
-    wizard()->resize(wizard()->sizeHint());
 }
 
 void OwncloudSetupPage::startSpinner()
 {
-    _ui.resultLayout->setEnabled(true);
-    _ui.urlLabel->setVisible(false);
+    _ui.progressLayout->setEnabled(true);
     _progressIndi->setVisible(true);
     _progressIndi->startAnimation();
 }
 
 void OwncloudSetupPage::stopSpinner()
 {
-    _ui.resultLayout->setEnabled(false);
-    _ui.urlLabel->setVisible(true);
+    _ui.progressLayout->setEnabled(false);
     _progressIndi->setVisible(false);
     _progressIndi->stopAnimation();
 }
@@ -395,34 +344,20 @@ void OwncloudSetupPage::slotCertificateAccepted()
 {
     QFile certFile(addCertDial->getCertificatePath());
     certFile.open(QFile::ReadOnly);
-    if (QSslCertificate::importPkcs12(
-            &certFile,
-            &_ocWizard->_clientSslKey,
-            &_ocWizard->_clientSslCertificate,
-            &_ocWizard->_clientSslCaCertificates,
-            addCertDial->getCertificatePasswd().toLocal8Bit())) {
-        AccountPtr acc = _ocWizard->account();
+    QByteArray certData = certFile.readAll();
+    QByteArray certPassword = addCertDial->getCertificatePasswd().toLocal8Bit();
 
-        // to re-create the session ticket because we added a key/cert
-        acc->setSslConfiguration(QSslConfiguration());
-        QSslConfiguration sslConfiguration = acc->getOrCreateSslConfig();
-
-        // We're stuffing the certificate into the configuration form here. Later the
-        // cert will come via the HttpCredentials
-        sslConfiguration.setLocalCertificate(_ocWizard->_clientSslCertificate);
-        sslConfiguration.setPrivateKey(_ocWizard->_clientSslKey);
-
-        // Be sure to merge the CAs
-        auto ca = sslConfiguration.systemCaCertificates();
-        ca.append(_ocWizard->_clientSslCaCertificates);
-        sslConfiguration.setCaCertificates(ca);
-
-        acc->setSslConfiguration(sslConfiguration);
-
-        // Make sure TCP connections get re-established
-        acc->networkAccessManager()->clearAccessCache();
+    QBuffer certDataBuffer(&certData);
+    certDataBuffer.open(QIODevice::ReadOnly);
+    if (QSslCertificate::importPkcs12(&certDataBuffer,
+            &_ocWizard->_clientSslKey, &_ocWizard->_clientSslCertificate,
+            &_ocWizard->_clientSslCaCertificates, certPassword)) {
+        _ocWizard->_clientCertBundle = certData;
+        _ocWizard->_clientCertPassword = certPassword;
 
         addCertDial->reinit(); // FIXME: Why not just have this only created on use?
+
+        // The extracted SSL key and cert gets added to the QSslConfiguration in checkServer()
         validatePage();
     } else {
         addCertDial->showErrorMessage(tr("Could not load certificate. Maybe wrong password?"));
@@ -430,8 +365,28 @@ void OwncloudSetupPage::slotCertificateAccepted()
     }
 }
 
-OwncloudSetupPage::~OwncloudSetupPage()
+OwncloudSetupPage::~OwncloudSetupPage() = default;
+
+void OwncloudSetupPage::slotStyleChanged()
 {
+    customizeStyle();
+}
+
+void OwncloudSetupPage::customizeStyle()
+{
+    setLogo();
+
+    if (_progressIndi) {
+        const auto isDarkBackground = Theme::isDarkColor(palette().window().color());
+        if (isDarkBackground) {
+            _progressIndi->setColor(Qt::white);
+        } else {
+            _progressIndi->setColor(Qt::black);
+        }
+    }
+
+
+    WizardCommon::customizeHintLabel(_ui.serverAddressDescriptionLabel);
 }
 
 } // namespace OCC

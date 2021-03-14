@@ -19,6 +19,7 @@
 
 
 #include <cerrno>
+#include <QDirIterator>
 #include <QStringList>
 
 
@@ -71,7 +72,7 @@ static void callback(
         QString fn = qstring.normalized(QString::NormalizationForm_C);
 
         if (!(eventFlags[i] & c_interestingFlags)) {
-            qCDebug(lcFolderWatcher) << "Ignoring non-content changes for" << fn;
+            qCDebug(lcFolderWatcher) << "Ignoring non-content changes for" << fn << eventFlags[i];
             continue;
         }
 
@@ -86,13 +87,11 @@ void FolderWatcherPrivate::startWatching()
     qCDebug(lcFolderWatcher) << "FolderWatcherPrivate::startWatching()" << _folder;
     CFStringRef folderCF = CFStringCreateWithCharacters(0, reinterpret_cast<const UniChar *>(_folder.unicode()),
         _folder.length());
-    CFArrayRef pathsToWatch = CFStringCreateArrayBySeparatingStrings(NULL, folderCF, CFSTR(":"));
+    CFArrayRef pathsToWatch = CFStringCreateArrayBySeparatingStrings(nullptr, folderCF, CFSTR(":"));
 
-    FSEventStreamContext ctx = { 0, this, NULL, NULL, NULL };
+    FSEventStreamContext ctx = { 0, this, nullptr, nullptr, nullptr };
 
-    // TODO: Add kFSEventStreamCreateFlagFileEvents ?
-
-    _stream = FSEventStreamCreate(NULL,
+    _stream = FSEventStreamCreate(nullptr,
         &callback,
         &ctx,
         pathsToWatch,
@@ -101,13 +100,32 @@ void FolderWatcherPrivate::startWatching()
         kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagIgnoreSelf);
 
     CFRelease(pathsToWatch);
+    CFRelease(folderCF);
     FSEventStreamScheduleWithRunLoop(_stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
     FSEventStreamStart(_stream);
 }
 
+QStringList FolderWatcherPrivate::addCoalescedPaths(const QStringList &paths) const
+{
+    QStringList coalescedPaths;
+    for (const auto &eventPath : paths) {
+        if (QDir(eventPath).exists()) {
+            QDirIterator it(eventPath, QDir::AllDirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                auto subfolder = it.next();
+                if (!paths.contains(subfolder)) {
+                    coalescedPaths.append(subfolder);
+                }
+            }
+        }
+    }
+    return (paths + coalescedPaths);
+}
+
 void FolderWatcherPrivate::doNotifyParent(const QStringList &paths)
 {
-    _parent->changeDetected(paths);
+    const QStringList totalPaths = addCoalescedPaths(paths);
+    _parent->changeDetected(totalPaths);
 }
 
 

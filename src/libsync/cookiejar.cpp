@@ -21,6 +21,7 @@
 #include <QLoggingCategory>
 #include <QNetworkCookie>
 #include <QDataStream>
+#include <QDir>
 
 namespace OCC {
 
@@ -34,8 +35,8 @@ QDataStream &operator<<(QDataStream &stream, const QList<QNetworkCookie> &list)
 {
     stream << JAR_VERSION;
     stream << quint32(list.size());
-    for (int i = 0; i < list.size(); ++i)
-        stream << list.at(i).toRawForm();
+    for (const auto &cookie : list)
+        stream << cookie.toRawForm();
     return stream;
 }
 
@@ -43,13 +44,13 @@ QDataStream &operator>>(QDataStream &stream, QList<QNetworkCookie> &list)
 {
     list.clear();
 
-    quint32 version;
+    quint32 version = 0;
     stream >> version;
 
     if (version != JAR_VERSION)
         return stream;
 
-    quint32 count;
+    quint32 count = 0;
     stream >> count;
     for (quint32 i = 0; i < count; ++i) {
         QByteArray value;
@@ -71,9 +72,7 @@ CookieJar::CookieJar(QObject *parent)
 {
 }
 
-CookieJar::~CookieJar()
-{
-}
+CookieJar::~CookieJar() = default;
 
 bool CookieJar::setCookiesFromUrl(const QList<QNetworkCookie> &cookieList, const QUrl &url)
 {
@@ -97,27 +96,45 @@ void CookieJar::clearSessionCookies()
     setAllCookies(removeExpired(allCookies()));
 }
 
-void CookieJar::save(const QString &fileName)
+bool CookieJar::save(const QString &fileName)
 {
-    QFile file;
-    file.setFileName(fileName);
+    const QFileInfo info(fileName);
+    if (!info.dir().exists())
+    {
+        info.dir().mkpath(".");
+    }
+
     qCDebug(lcCookieJar) << fileName;
-    file.open(QIODevice::WriteOnly);
+    QFile file(fileName);
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        return false;
+    }
     QDataStream stream(&file);
     stream << removeExpired(allCookies());
     file.close();
+    return true;
 }
 
-void CookieJar::restore(const QString &fileName)
+bool CookieJar::restore(const QString &fileName)
 {
-    QFile file;
-    file.setFileName(fileName);
-    file.open(QIODevice::ReadOnly);
+    const QFileInfo info(fileName);
+    if (!info.exists())
+    {
+        return false;
+    }
+
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        return false;
+    }
     QDataStream stream(&file);
     QList<QNetworkCookie> list;
     stream >> list;
     setAllCookies(removeExpired(list));
     file.close();
+    return true;
 }
 
 QList<QNetworkCookie> CookieJar::removeExpired(const QList<QNetworkCookie> &cookies)

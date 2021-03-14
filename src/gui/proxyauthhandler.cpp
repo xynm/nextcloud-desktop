@@ -21,9 +21,10 @@
 
 #include <QApplication>
 
-#include <keychain.h>
+#include <qt5keychain/keychain.h>
 
 using namespace OCC;
+using namespace QKeychain;
 
 Q_LOGGING_CATEGORY(lcProxy, "nextcloud.gui.credentials.proxy", QtInfoMsg)
 
@@ -34,10 +35,6 @@ ProxyAuthHandler *ProxyAuthHandler::instance()
 }
 
 ProxyAuthHandler::ProxyAuthHandler()
-    : _blocked(false)
-    , _waitingForDialog(0)
-    , _waitingForKeychain(0)
-    , _keychainJobRunning(false)
 {
     _dialog = new ProxyAuthDialog();
 
@@ -83,14 +80,12 @@ void ProxyAuthHandler::handleProxyAuthenticationRequired(
     }
 
     // Find the responsible QNAM if possible.
-    QNetworkAccessManager *sending_qnam = nullptr;
-    QWeakPointer<QNetworkAccessManager> qnam_alive;
-    if (Account *account = qobject_cast<Account *>(sender())) {
+    QPointer<QNetworkAccessManager> sending_qnam = nullptr;
+    if (auto account = qobject_cast<Account *>(sender())) {
         // Since we go into an event loop, it's possible for the account's qnam
         // to be destroyed before we get back. We can use this to check for its
         // liveness.
-        qnam_alive = account->sharedNetworkAccessManager();
-        sending_qnam = qnam_alive.data();
+        sending_qnam = account->sharedNetworkAccessManager().data();
     }
     if (!sending_qnam) {
         qCWarning(lcProxy) << "Could not get the sending QNAM for" << sender();
@@ -128,19 +123,13 @@ void ProxyAuthHandler::handleProxyAuthenticationRequired(
     qCInfo(lcProxy) << "got creds for" << _proxy;
     authenticator->setUser(_username);
     authenticator->setPassword(_password);
-    sending_qnam = qnam_alive.data();
     if (sending_qnam) {
         _gaveCredentialsTo.insert(sending_qnam);
         connect(sending_qnam, &QObject::destroyed,
             this, &ProxyAuthHandler::slotSenderDestroyed);
     }
 }
-
-void ProxyAuthHandler::slotKeychainJobDone()
-{
-    _keychainJobRunning = false;
-}
-
+ 
 void ProxyAuthHandler::slotSenderDestroyed(QObject *obj)
 {
     _gaveCredentialsTo.remove(obj);
@@ -158,11 +147,12 @@ bool ProxyAuthHandler::getCredsFromDialog()
     // This function can be reentered while the dialog is open.
     // If that's the case, continue processing the dialog until
     // it's done.
-    ++_waitingForDialog;
-    while (_dialog && _dialog->isVisible()) {
-        QApplication::processEvents(QEventLoop::ExcludeSocketNotifiers, 200);
+    if(_dialog) {
+        execAwait(_dialog.data(),
+                  &QDialog::finished,
+                  _waitingForDialog,
+                  QEventLoop::ExcludeSocketNotifiers);
     }
-    --_waitingForDialog;
 
     if (_dialog && _dialog->result() == QDialog::Accepted) {
         qCInfo(lcProxy) << "got creds for" << _proxy << "from dialog";
@@ -173,10 +163,26 @@ bool ProxyAuthHandler::getCredsFromDialog()
     return false;
 }
 
+template<class T, typename PointerToMemberFunction>
+void ProxyAuthHandler::execAwait(const T *sender,
+                                 PointerToMemberFunction signal,
+                                 int &counter,
+                                 const QEventLoop::ProcessEventsFlags flags)
+{
+    if (!sender) {
+        return;
+    }
+
+    QEventLoop waitLoop;
+    connect(sender, signal, &waitLoop, &QEventLoop::quit);
+
+    ++counter;
+    waitLoop.exec(flags);
+    --counter;
+}
+
 bool ProxyAuthHandler::getCredsFromKeychain()
 {
-    using namespace QKeychain;
-
     if (_waitingForDialog) {
         return false;
     }
@@ -194,9 +200,6 @@ bool ProxyAuthHandler::getCredsFromKeychain()
         _readPasswordJob->setInsecureFallback(false);
         _readPasswordJob->setKey(keychainPasswordKey());
         _readPasswordJob->setAutoDelete(false);
-        connect(_readPasswordJob.data(), &QKeychain::Job::finished,
-            this, &ProxyAuthHandler::slotKeychainJobDone);
-        _keychainJobRunning = true;
         _readPasswordJob->start();
     }
 
@@ -204,12 +207,9 @@ bool ProxyAuthHandler::getCredsFromKeychain()
     // This really needs the counter and the flag here, because otherwise we get
     // bad behavior when we reenter this code after the flag has been switched
     // but before the while loop has finished.
-    ++_waitingForKeychain;
-    _keychainJobRunning = true;
-    while (_keychainJobRunning) {
-        QApplication::processEvents(QEventLoop::AllEvents, 200);
-    }
-    --_waitingForKeychain;
+    execAwait(_readPasswordJob.data(),
+              &QKeychain::Job::finished,
+              _waitingForKeychain);
 
     if (_readPasswordJob->error() == NoError) {
         qCInfo(lcProxy) << "got creds for" << _proxy << "from keychain";
@@ -226,8 +226,6 @@ bool ProxyAuthHandler::getCredsFromKeychain()
 
 void ProxyAuthHandler::storeCredsInKeychain()
 {
-    using namespace QKeychain;
-
     if (_waitingForKeychain) {
         return;
     }
@@ -236,22 +234,17 @@ void ProxyAuthHandler::storeCredsInKeychain()
 
     _settings->setValue(keychainUsernameKey(), _username);
 
-    WritePasswordJob *job = new WritePasswordJob(Theme::instance()->appName(), this);
+    auto job = new WritePasswordJob(Theme::instance()->appName(), this);
     job->setSettings(_settings.data());
     job->setInsecureFallback(false);
     job->setKey(keychainPasswordKey());
     job->setTextData(_password);
     job->setAutoDelete(false);
-    connect(job, &QKeychain::Job::finished, this, &ProxyAuthHandler::slotKeychainJobDone);
-    _keychainJobRunning = true;
     job->start();
 
-    ++_waitingForKeychain;
-    _keychainJobRunning = true;
-    while (_keychainJobRunning) {
-        QApplication::processEvents(QEventLoop::AllEvents, 200);
-    }
-    --_waitingForKeychain;
+    execAwait(job,
+              &QKeychain::Job::finished,
+              _waitingForKeychain);
 
     job->deleteLater();
     if (job->error() != NoError) {

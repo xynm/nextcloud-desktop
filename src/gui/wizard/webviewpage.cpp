@@ -4,6 +4,7 @@
 #include <QProgressBar>
 #include <QVBoxLayout>
 #include <QNetworkProxyFactory>
+#include <QScreen>
 
 #include "owncloudwizard.h"
 #include "creds/webflowcredentials.h"
@@ -12,7 +13,7 @@
 
 namespace OCC {
 
-Q_LOGGING_CATEGORY(lcWizardWebiewPage, "gui.wizard.webviewpage", QtInfoMsg)
+Q_LOGGING_CATEGORY(lcWizardWebiewPage, "nextcloud.gui.wizard.webviewpage", QtInfoMsg)
 
 
 WebViewPage::WebViewPage(QWidget *parent)
@@ -23,7 +24,8 @@ WebViewPage::WebViewPage(QWidget *parent)
     qCInfo(lcWizardWebiewPage()) << "Time for a webview!";
     _webView = new WebView(this);
 
-    QVBoxLayout *layout = new QVBoxLayout(this);
+    auto *layout = new QVBoxLayout(this);
+    layout->setMargin(0);
     layout->addWidget(_webView);
     setLayout(layout);
 
@@ -32,9 +34,10 @@ WebViewPage::WebViewPage(QWidget *parent)
     //_useSystemProxy = QNetworkProxyFactory::usesSystemConfiguration();
 }
 
-WebViewPage::~WebViewPage() {
-    //QNetworkProxyFactory::setUseSystemConfiguration(_useSystemProxy);
-}
+WebViewPage::~WebViewPage() = default;
+//{
+//    QNetworkProxyFactory::setUseSystemConfiguration(_useSystemProxy);
+//}
 
 void WebViewPage::initializePage() {
     //QNetworkProxy::setApplicationProxy(QNetworkProxy::applicationProxy());
@@ -51,6 +54,44 @@ void WebViewPage::initializePage() {
     }
     qCInfo(lcWizardWebiewPage()) << "Url to auth at: " << url;
     _webView->setUrl(QUrl(url));
+
+    _originalWizardSize = _ocWizard->size();
+    resizeWizard();
+}
+
+void WebViewPage::resizeWizard()
+{
+    // The webview needs a little bit more space
+    auto wizardSizeChanged = tryToSetWizardSize(_originalWizardSize.width() * 2, _originalWizardSize.height() * 2);
+
+    if (!wizardSizeChanged) {
+        wizardSizeChanged = tryToSetWizardSize(static_cast<int>(_originalWizardSize.width() * 1.5), static_cast<int>(_originalWizardSize.height() * 1.5));
+    }
+
+    if (wizardSizeChanged) {
+        _ocWizard->centerWindow();
+    }
+}
+
+bool WebViewPage::tryToSetWizardSize(int width, int height)
+{
+    const auto window = _ocWizard->window();
+    const auto screenGeometry = QGuiApplication::screenAt(window->pos())->geometry();
+    const auto windowWidth = screenGeometry.width();
+    const auto windowHeight = screenGeometry.height();
+
+    if (width < windowWidth && height < windowHeight) {
+        _ocWizard->resize(width, height);
+        return true;
+    }
+
+    return false;
+}
+
+void WebViewPage::cleanupPage()
+{
+    _ocWizard->resize(_originalWizardSize);
+    _ocWizard->centerWindow();
 }
 
 int WebViewPage::nextId() const {

@@ -18,14 +18,13 @@
 #include <QHash>
 #include <QObject>
 #include <QMap>
-#include <QLinkedList>
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QPointer>
 #include <QIODevice>
 #include <QMutex>
 
-#include "csync_util.h"
+#include "csync.h"
 #include "syncfileitem.h"
 #include "common/syncjournaldb.h"
 #include "bandwidthmanager.h"
@@ -172,17 +171,26 @@ protected:
         _item->_errorString = msg;
     }
 
+    bool hasEncryptedAncestor() const;
+
 protected slots:
     void slotRestoreJobFinished(SyncFileItem::Status status);
 
 private:
     QScopedPointer<PropagateItemJob> _restoreJob;
+    JobParallelism _parallelism;
 
 public:
     PropagateItemJob(OwncloudPropagator *propagator, const SyncFileItemPtr &item)
         : PropagatorJob(propagator)
         , _item(item)
+        , _parallelism(FullParallelism)
     {
+        // we should always execute jobs that process the E2EE API calls as sequential jobs
+        // TODO: In fact, we must make sure Lock/Unlock are not colliding and always wait for each other to complete. So, we could refactor this "_parallelism" later
+        // so every "PropagateItemJob" that will potentially execute Lock job on E2EE folder will get executed sequentially.
+        // As an alternative, we could optimize Lock/Unlock calls, so we do a batch-write on one folder and only lock and unlock a folder once per batch.
+        _parallelism = (_item->_isEncrypted || hasEncryptedAncestor()) ? WaitForFinished : FullParallelism;
     }
     ~PropagateItemJob();
 
@@ -191,13 +199,14 @@ public:
         if (_state != NotYetStarted) {
             return false;
         }
-        const char *instruction_str = csync_instruction_str(_item->_instruction);
-        qCInfo(lcPropagator) << "Starting" << instruction_str << "propagation of" << _item->_file << "by" << this;
+        qCInfo(lcPropagator) << "Starting" << _item->_instruction << "propagation of" << _item->destination() << "by" << this;
 
         _state = Running;
         QMetaObject::invokeMethod(this, "start"); // We could be in a different thread (neon jobs)
         return true;
     }
+
+    virtual JobParallelism parallelism() override { return _parallelism; }
 
     SyncFileItemPtr _item;
 
@@ -225,12 +234,10 @@ public:
     {
     }
 
-    virtual ~PropagatorCompositeJob()
-    {
-        // Don't delete jobs in _jobsToDo and _runningJobs: they have parents
-        // that will be responsible for cleanup. Deleting them here would risk
-        // deleting something that has already been deleted by a shared parent.
-    }
+    // Don't delete jobs in _jobsToDo and _runningJobs: they have parents
+    // that will be responsible for cleanup. Deleting them here would risk
+    // deleting something that has already been deleted by a shared parent.
+    virtual ~PropagatorCompositeJob() = default;
 
     void appendJob(PropagatorJob *job);
     void appendTask(const SyncFileItemPtr &item)
@@ -292,7 +299,7 @@ public:
 
     PropagatorCompositeJob _subJobs;
 
-    explicit PropagateDirectory(OwncloudPropagator *propagator, const SyncFileItemPtr &item = SyncFileItemPtr(new SyncFileItem));
+    explicit PropagateDirectory(OwncloudPropagator *propagator, const SyncFileItemPtr &item);
 
     void appendJob(PropagatorJob *job)
     {
@@ -333,10 +340,35 @@ public:
 private slots:
 
     void slotFirstJobFinished(SyncFileItem::Status status);
-    void slotSubJobsFinished(SyncFileItem::Status status);
+    virtual void slotSubJobsFinished(SyncFileItem::Status status);
 
 };
 
+/**
+ * @brief Propagate the root directory, and all its sub entries.
+ * @ingroup libsync
+ *
+ * Primary difference to PropagateDirectory is that it keeps track of directory
+ * deletions that must happen at the very end.
+ */
+class OWNCLOUDSYNC_EXPORT PropagateRootDirectory : public PropagateDirectory
+{
+    Q_OBJECT
+public:
+    PropagatorCompositeJob _dirDeletionJobs;
+
+    explicit PropagateRootDirectory(OwncloudPropagator *propagator);
+
+    bool scheduleSelfOrChild() override;
+    JobParallelism parallelism() override;
+    void abort(PropagatorJob::AbortType abortType) override;
+
+    qint64 committedDiskSpace() const override;
+
+private slots:
+    void slotSubJobsFinished(SyncFileItem::Status status) override;
+    void slotDirDeletionJobsFinished(SyncFileItem::Status status);
+};
 
 /**
  * @brief Dummy job that just mark it as completed and ignored
@@ -353,17 +385,22 @@ public:
     void start() override
     {
         SyncFileItem::Status status = _item->_status;
-        done(status == SyncFileItem::NoStatus ? SyncFileItem::FileIgnored : status, _item->_errorString);
+        if (status == SyncFileItem::NoStatus) {
+            if (_item->_instruction == CSYNC_INSTRUCTION_ERROR) {
+                status = SyncFileItem::NormalError;
+            } else {
+                status = SyncFileItem::FileIgnored;
+                ASSERT(_item->_instruction == CSYNC_INSTRUCTION_IGNORE);
+            }
+        }
+        done(status, _item->_errorString);
     }
 };
 
-class OwncloudPropagator : public QObject
+class OWNCLOUDSYNC_EXPORT OwncloudPropagator : public QObject
 {
     Q_OBJECT
 public:
-    const QString _localDir; // absolute path to the local directory. ends with '/'
-    const QString _remoteFolder; // remote folder, ends with '/'
-
     SyncJournalDb *const _journal;
     bool _finishedEmited; // used to ensure that finished is only emitted once
 
@@ -384,20 +421,16 @@ public:
 
     ~OwncloudPropagator();
 
-    void start(const SyncFileItemVector &_syncedItems,
-               const bool &hasChange = false,
-               const int &lastChangeInstruction = 0,
-               const bool &hasDelete = false,
-               const int &lastDeleteInstruction = 0);
+    void start(const SyncFileItemVector &_syncedItems);
 
     const SyncOptions &syncOptions() const;
     void setSyncOptions(const SyncOptions &syncOptions);
 
-    QAtomicInt _downloadLimit;
-    QAtomicInt _uploadLimit;
+    int _downloadLimit = 0;
+    int _uploadLimit = 0;
     BandwidthManager _bandwidthManager;
 
-    QAtomicInt _abortRequested; // boolean set by the main thread to abort.
+    bool _abortRequested = false;
 
     /** The list of currently active jobs.
         This list contains the jobs that are currently using ressources and is used purely to
@@ -421,7 +454,7 @@ public:
      *
      * This allows skipping of uploads that have a very high likelihood of failure.
      */
-    QHash<QString, quint64> _folderQuota;
+    QHash<QString, qint64> _folderQuota;
 
     /* the maximum number of jobs using bandwidth (uploads or downloads, in parallel) */
     int maximumActiveTransferJob();
@@ -432,8 +465,8 @@ public:
      * if Capabilities::desiredChunkUploadDuration has a target
      * chunk-upload duration set.
      */
-    quint64 _chunkSize;
-    quint64 smallFileSize();
+    qint64 _chunkSize;
+    qint64 smallFileSize();
 
     /* The maximum number of active jobs in parallel  */
     int hardMaximumActiveJob();
@@ -454,20 +487,26 @@ public:
      */
     bool hasCaseClashAccessibilityProblem(const QString &relfile);
 
-    /* returns the local file path for the given tmp_file_name */
-    QString getFilePath(const QString &tmp_file_name) const;
+    Q_REQUIRED_RESULT QString fullLocalPath(const QString &tmp_file_name) const;
+    QString localPath() const;
+
+    /**
+     * Returns the full remote path including the folder root of a
+     * folder sync path.
+     */
+    Q_REQUIRED_RESULT QString fullRemotePath(const QString &tmp_file_name) const;
+    QString remotePath() const;
 
     /** Creates the job for an item.
      */
     PropagateItemJob *createJob(const SyncFileItemPtr &item);
 
     void scheduleNextJob();
-    void reportProgress(const SyncFileItem &, quint64 bytes);
+    void reportProgress(const SyncFileItem &, qint64 bytes);
 
     void abort()
     {
-        bool alreadyAborting = _abortRequested.fetchAndStoreOrdered(true);
-        if (alreadyAborting)
+        if (_abortRequested)
             return;
         if (_rootJob) {
             // Connect to abortFinished  which signals that abort has been asynchronously finished
@@ -510,6 +549,20 @@ public:
     bool createConflict(const SyncFileItemPtr &item,
         PropagatorCompositeJob *composite, QString *error);
 
+    // Map original path (as in the DB) to target final path
+    QMap<QString, QString> _renamedDirectories;
+    QString adjustRenamedPath(const QString &original) const;
+
+    /** Update the database for an item.
+     *
+     * Typically after a sync operation succeeded. Updates the inode from
+     * the filesystem.
+     *
+     * Will also trigger a Vfs::convertToPlaceholder.
+     */
+    static bool updateMetadata(const SyncFileItem &item, const QString &localFolderPath, SyncJournalDb &journal, Vfs &vfs);
+    bool updateMetadata(const SyncFileItem &item); // convenience for the above
+
 private slots:
 
     void abortTimeout()
@@ -532,7 +585,7 @@ private slots:
 signals:
     void newItem(const SyncFileItemPtr &);
     void itemCompleted(const SyncFileItemPtr &);
-    void progress(const SyncFileItem &, quint64 bytes);
+    void progress(const SyncFileItem &, qint64 bytes);
     void finished(bool success);
 
     /** Emitted when propagation has problems with a locked file. */
@@ -550,8 +603,12 @@ signals:
 
 private:
     AccountPtr _account;
-    QScopedPointer<PropagateDirectory> _rootJob;
+    QScopedPointer<PropagateRootDirectory> _rootJob;
     SyncOptions _syncOptions;
+    bool _jobScheduled = false;
+
+    const QString _localDir; // absolute path to the local directory. ends with '/'
+    const QString _remoteFolder; // remote folder, ends with '/'
 };
 
 
@@ -566,15 +623,17 @@ class CleanupPollsJob : public QObject
     AccountPtr _account;
     SyncJournalDb *_journal;
     QString _localPath;
+    QSharedPointer<Vfs> _vfs;
 
 public:
     explicit CleanupPollsJob(const QVector<SyncJournalDb::PollInfo> &pollInfos, AccountPtr account,
-        SyncJournalDb *journal, const QString &localPath, QObject *parent = nullptr)
+        SyncJournalDb *journal, const QString &localPath, const QSharedPointer<Vfs> &vfs, QObject *parent = nullptr)
         : QObject(parent)
         , _pollInfos(pollInfos)
         , _account(account)
         , _journal(journal)
         , _localPath(localPath)
+        , _vfs(vfs)
     {
     }
 

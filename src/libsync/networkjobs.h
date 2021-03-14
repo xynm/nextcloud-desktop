@@ -18,6 +18,8 @@
 
 #include "abstractnetworkjob.h"
 
+#include "common/result.h"
+
 #include <QBuffer>
 #include <QUrlQuery>
 #include <functional>
@@ -26,6 +28,18 @@ class QUrl;
 class QJsonObject;
 
 namespace OCC {
+
+/** Strips quotes and gzip annotations */
+OWNCLOUDSYNC_EXPORT QByteArray parseEtag(const char *header);
+
+struct HttpError
+{
+    int code; // HTTP error code
+    QString message;
+};
+
+template <typename T>
+using HttpResult = Result<T, HttpError>;
 
 /**
  * @brief The EntityExistsJob class
@@ -253,6 +267,7 @@ class OWNCLOUDSYNC_EXPORT MkColJob : public AbstractNetworkJob
 
 public:
     explicit MkColJob(AccountPtr account, const QString &path, QObject *parent = nullptr);
+    explicit MkColJob(AccountPtr account, const QString &path, const QMap<QByteArray, QByteArray> &extraHeaders, QObject *parent = nullptr);
     explicit MkColJob(AccountPtr account, const QUrl &url,
         const QMap<QByteArray, QByteArray> &extraHeaders, QObject *parent = nullptr);
     void start() override;
@@ -333,7 +348,8 @@ public:
     void start() override;
 
 signals:
-    void etagRetreived(const QString &etag);
+    void etagRetrieved(const QString &etag, const QDateTime &time);
+    void finishedWithResult(const HttpResult<QString> &etag);
 
 private slots:
     bool finished() override;
@@ -373,6 +389,16 @@ public:
     void addQueryParams(const QUrlQuery &params);
     void addRawHeader(const QByteArray &headerName, const QByteArray &value);
 
+    /**
+     * @brief usePOST - allow job to do an anonymous POST request instead of GET
+     * @param params: (optional) true for POST, false for GET (default).
+     *
+     * This function needs to be called before start() obviously.
+     */
+    void usePOST(bool usePOST = true) {
+        _usePOST = usePOST;
+    }
+
 public slots:
     void start() override;
 
@@ -398,6 +424,8 @@ signals:
 private:
     QUrlQuery _additionalParams;
     QNetworkRequest _request;
+
+    bool _usePOST = false;
 };
 
 /**
@@ -415,6 +443,7 @@ public:
         WebViewFlow,
         LoginFlowV2
     };
+    Q_ENUM(AuthType)
 
     explicit DetermineAuthTypeJob(AccountPtr account, QObject *parent = nullptr);
     void start();
@@ -422,13 +451,15 @@ signals:
     void authType(AuthType);
 
 private:
-    void checkBothDone();
+    void checkAllDone();
 
     AccountPtr _account;
     AuthType _resultGet = Basic;
     AuthType _resultPropfind = Basic;
+    AuthType _resultOldFlow = Basic;
     bool _getDone = false;
     bool _propfindDone = false;
+    bool _oldFlowDone = false;
 };
 
 /**

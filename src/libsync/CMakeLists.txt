@@ -1,4 +1,6 @@
 project(libsync)
+include(DefinePlatformDefaults)
+
 set(CMAKE_AUTOMOC TRUE)
 
 if ( APPLE )
@@ -15,18 +17,19 @@ IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD|NetBSD|OpenBSD")
     )
 ENDIF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD|NetBSD|OpenBSD")
 
-if(SPARKLE_FOUND AND NOT BUILD_LIBRARIES_ONLY)
-    list (APPEND OS_SPECIFIC_LINK_LIBRARIES ${SPARKLE_LIBRARY})
-endif()
-
 set(libsync_SRCS
     account.cpp
+    pushnotifications.cpp
     wordlist.cpp
     bandwidthmanager.cpp
     capabilities.cpp
+    clientproxy.cpp
     cookiejar.cpp
+    discovery.cpp
     discoveryphase.cpp
+    encryptfolderjob.cpp
     filesystem.cpp
+    httplogger.cpp
     logger.cpp
     accessmanager.cpp
     configfile.cpp
@@ -34,6 +37,8 @@ set(libsync_SRCS
     networkjobs.cpp
     owncloudpropagator.cpp
     nextcloudtheme.cpp
+    abstractpropagateremotedeleteencrypted.cpp
+    deletejob.cpp
     progressdispatcher.cpp
     propagatorjobs.cpp
     propagatedownload.cpp
@@ -42,14 +47,15 @@ set(libsync_SRCS
     propagateuploadng.cpp
     propagateremotedelete.cpp
     propagateremotedeleteencrypted.cpp
+    propagateremotedeleteencryptedrootfolder.cpp
     propagateremotemove.cpp
     propagateremotemkdir.cpp
     propagateuploadencrypted.cpp
     propagatedownloadencrypted.cpp
     syncengine.cpp
     syncfileitem.cpp
-    syncfilestatus.cpp
     syncfilestatustracker.cpp
+    localdiscoverytracker.cpp
     syncresult.cpp
     theme.cpp
     clientsideencryption.cpp
@@ -57,7 +63,26 @@ set(libsync_SRCS
     creds/dummycredentials.cpp
     creds/abstractcredentials.cpp
     creds/credentialscommon.cpp
+    creds/keychainchunk.cpp
+    vfs/suffix/vfs_suffix.cpp
 )
+
+if (WIN32)
+    set(libsync_SRCS ${libsync_SRCS}
+        vfs/cfapi/cfapiwrapper.cpp
+        vfs/cfapi/hydrationjob.cpp
+        vfs/cfapi/vfs_cfapi.cpp
+    )
+    add_definitions(-D_WIN32_WINNT=_WIN32_WINNT_WIN10)
+    list(APPEND OS_SPECIFIC_LINK_LIBRARIES cldapi)
+elseif(LINUX) # elseif(LINUX OR APPLE)
+    set(libsync_SRCS ${libsync_SRCS} vfs/xattr/vfs_xattr.cpp)
+    if (APPLE)
+        set(libsync_SRCS ${libsync_SRCS} vfs/xattr/xattrwrapper_mac.cpp)
+    else()
+        set(libsync_SRCS ${libsync_SRCS} vfs/xattr/xattrwrapper_linux.cpp)
+    endif()
+endif()
 
 if(TOKEN_AUTH_ONLY)
     set (libsync_SRCS ${libsync_SRCS} creds/tokencredentials.cpp)
@@ -92,19 +117,22 @@ IF (NOT APPLE)
     )
 ENDIF(NOT APPLE)
 
+find_package(Qt5 REQUIRED COMPONENTS WebSockets)
 add_library(${synclib_NAME} SHARED ${libsync_SRCS})
 target_link_libraries(${synclib_NAME}
-    ocsync
-    OpenSSL::Crypto
-    OpenSSL::SSL
-    ${OS_SPECIFIC_LINK_LIBRARIES}
-    Qt5::Core Qt5::Network
+  PUBLIC
+  "${csync_NAME}"
+  OpenSSL::Crypto
+  OpenSSL::SSL
+  ${OS_SPECIFIC_LINK_LIBRARIES}
+  Qt5::Core
+  Qt5::Network
+  Qt5::WebSockets
 )
 
 if (NOT TOKEN_AUTH_ONLY)
-    find_package(Qt5 REQUIRED COMPONENTS Widgets)
-    target_link_libraries(${synclib_NAME} Qt5::Widgets ${QTKEYCHAIN_LIBRARY})
-    target_include_directories(${synclib_NAME} PRIVATE ${QTKEYCHAIN_INCLUDE_DIR})
+    find_package(Qt5 REQUIRED COMPONENTS Widgets Svg)
+    target_link_libraries(${synclib_NAME} PUBLIC Qt5::Widgets Qt5::Svg qt5keychain)
 endif()
 
 if(INOTIFY_FOUND)
@@ -128,8 +156,6 @@ set_target_properties( ${synclib_NAME}  PROPERTIES
 	SOVERSION ${MIRALL_SOVERSION}
 	RUNTIME_OUTPUT_DIRECTORY ${BIN_OUTPUT_DIRECTORY}
 )
-set_target_properties( ${synclib_NAME} PROPERTIES
-	INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${LIB_INSTALL_DIR}/${APPLICATION_EXECUTABLE};${CMAKE_INSTALL_RPATH}" )
 
 if(NOT BUILD_OWNCLOUD_OSX_BUNDLE)
     install(TARGETS ${synclib_NAME}
@@ -139,10 +165,4 @@ if(NOT BUILD_OWNCLOUD_OSX_BUNDLE)
     )
 else()
     install(TARGETS ${synclib_NAME} DESTINATION ${OWNCLOUD_OSX_BUNDLE}/Contents/MacOS)
-    if (SPARKLE_FOUND)
-        install(DIRECTORY "${SPARKLE_LIBRARY}"
-	        DESTINATION "${OWNCLOUD_OSX_BUNDLE}/Contents/Frameworks" USE_SOURCE_PERMISSIONS)
-    endif (SPARKLE_FOUND)
 endif()
-
-

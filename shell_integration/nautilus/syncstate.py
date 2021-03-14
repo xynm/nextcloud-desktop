@@ -28,10 +28,8 @@ import time
 
 from gi.repository import GObject, Nautilus
 
-# Please do not touch the following line.
-# The reason is that we use a script to adopt this file for branding
-# by replacing this line with the branding app name. If the following
-# line is changed, the script can not match the pattern and fails.
+# Note: setappname.sh will search and replace 'ownCloud' on this file to update this line and other
+# occurrences of the name
 appname = 'Nextcloud'
 
 print("Initializing "+appname+"-client-nautilus extension")
@@ -177,7 +175,7 @@ class SocketConnect(GObject.GObject):
 socketConnect = SocketConnect()
 
 
-class MenuExtension(GObject.GObject, Nautilus.MenuProvider):
+class MenuExtension_ownCloud(GObject.GObject, Nautilus.MenuProvider):
     def __init__(self):
         GObject.GObject.__init__(self)
 
@@ -191,11 +189,12 @@ class MenuExtension(GObject.GObject, Nautilus.MenuProvider):
     def check_registered_paths(self, filename):
         topLevelFolder = False
         internalFile = False
+        absfilename = os.path.realpath(filename)
         for reg_path in socketConnect.registered_paths:
-            if filename == reg_path:
+            if absfilename == reg_path:
                 topLevelFolder = True
                 break
-            if filename.startswith(reg_path):
+            if absfilename.startswith(reg_path):
                 internalFile = True
                 # you can't have a registered path below another so it is save to break here
                 break
@@ -208,6 +207,7 @@ class MenuExtension(GObject.GObject, Nautilus.MenuProvider):
         all_internal_files = True
         for i, file_uri in enumerate(files):
             filename = get_local_path(file_uri.get_uri())
+            filename = os.path.realpath(filename)
 
             # Check if its a folder (ends with an /), if yes add a "/"
             # otherwise it will not find the entry in the table
@@ -296,6 +296,7 @@ class MenuExtension(GObject.GObject, Nautilus.MenuProvider):
         state = entry['state']
         state_ok = state.startswith('OK')
         state_sync = state.startswith('SYNC')
+        isDir = os.path.isdir(filename + os.sep)
         if state_ok:
             shareable = True
         elif state_sync and isDir:
@@ -345,7 +346,7 @@ class MenuExtension(GObject.GObject, Nautilus.MenuProvider):
         socketConnect.sendCommand(action + ":" + filename + "\n")
 
 
-class SyncStateExtension(GObject.GObject, Nautilus.InfoProvider):
+class SyncStateExtension_ownCloud(GObject.GObject, Nautilus.InfoProvider):
     def __init__(self):
         GObject.GObject.__init__(self)
 
@@ -446,6 +447,7 @@ class SyncStateExtension(GObject.GObject, Nautilus.InfoProvider):
             return
 
         filename = get_local_path(item.get_uri())
+        filename = os.path.realpath(filename)
         if item.is_directory():
             filename += os.sep
 

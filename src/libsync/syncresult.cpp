@@ -17,21 +17,7 @@
 
 namespace OCC {
 
-SyncResult::SyncResult()
-    : _status(Undefined)
-    , _foundFilesNotSynced(false)
-    , _folderStructureWasChanged(false)
-    , _numNewItems(0)
-    , _numRemovedItems(0)
-    , _numUpdatedItems(0)
-    , _numRenamedItems(0)
-    , _numNewConflictItems(0)
-    , _numOldConflictItems(0)
-    , _numErrorItems(0)
-    , _numLockedItems(0)
-
-{
-}
+SyncResult::SyncResult() = default;
 
 SyncResult::Status SyncResult::status() const
 {

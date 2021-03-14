@@ -38,8 +38,14 @@ QString Sharee::format() const
 
     if (_type == Type::Group) {
         formatted += QLatin1String(" (group)");
+    } else if (_type == Type::Email) {
+        formatted += QLatin1String(" (email)");
     } else if (_type == Type::Federated) {
         formatted += QLatin1String(" (remote)");
+    } else if (_type == Type::Circle) {
+        formatted += QLatin1String(" (circle)");
+    } else if (_type == Type::Room) {
+        formatted += QLatin1String(" (conversation)");
     }
 
     return formatted;
@@ -67,58 +73,34 @@ ShareeModel::ShareeModel(const AccountPtr &account, const QString &type, QObject
 {
 }
 
-void ShareeModel::fetch(const QString &search, const ShareeSet &blacklist)
+void ShareeModel::fetch(const QString &search, const ShareeSet &blacklist, LookupMode lookupMode)
 {
     _search = search;
     _shareeBlacklist = blacklist;
-    OcsShareeJob *job = new OcsShareeJob(_account);
+    auto *job = new OcsShareeJob(_account);
     connect(job, &OcsShareeJob::shareeJobFinished, this, &ShareeModel::shareesFetched);
     connect(job, &OcsJob::ocsError, this, &ShareeModel::displayErrorMessage);
-    job->getSharees(_search, _type, 1, 50);
+    job->getSharees(_search, _type, 1, 50, lookupMode == GlobalSearch ? true : false);
 }
 
 void ShareeModel::shareesFetched(const QJsonDocument &reply)
 {
-    auto data = reply.object().value("ocs").toObject().value("data").toObject();
-
     QVector<QSharedPointer<Sharee>> newSharees;
 
-    /*
-     * Todo properly loop all of this
-     */
-    auto exact = data.value("exact").toObject();
     {
-        auto users = exact.value("users").toArray();
-        foreach (auto user, users) {
-            newSharees.append(parseSharee(user.toObject()));
-        }
-        auto groups = exact.value("groups").toArray();
-        foreach (auto group, groups) {
-            newSharees.append(parseSharee(group.toObject()));
-        }
-        auto remotes = exact.value("remotes").toArray();
-        foreach (auto remote, remotes) {
-            newSharees.append(parseSharee(remote.toObject()));
-        }
-    }
+        const QStringList shareeTypes {"users", "groups", "emails", "remotes", "circles", "rooms"};
 
-    {
-        auto users = data.value("users").toArray();
-        foreach (auto user, users) {
-            newSharees.append(parseSharee(user.toObject()));
-        }
-    }
-    {
-        auto groups = data.value("groups").toArray();
-        foreach (auto group, groups) {
-            newSharees.append(parseSharee(group.toObject()));
-        }
-    }
-    {
-        auto remotes = data.value("remotes").toArray();
-        foreach (auto remote, remotes) {
-            newSharees.append(parseSharee(remote.toObject()));
-        }
+        const auto appendSharees = [this, &shareeTypes](const QJsonObject &data, QVector<QSharedPointer<Sharee>>& out) {
+            for (const auto &shareeType : shareeTypes) {
+                const auto category = data.value(shareeType).toArray();
+                for (const auto &sharee : category) {
+                    out.append(parseSharee(sharee.toObject()));
+                }
+            }
+        };
+
+        appendSharees(reply.object().value("ocs").toObject().value("data").toObject(), newSharees);
+        appendSharees(reply.object().value("ocs").toObject().value("data").toObject().value("exact").toObject(), newSharees);
     }
 
     // Filter sharees that we have already shared with
@@ -143,9 +125,13 @@ void ShareeModel::shareesFetched(const QJsonDocument &reply)
 
 QSharedPointer<Sharee> ShareeModel::parseSharee(const QJsonObject &data)
 {
-    const QString displayName = data.value("label").toString();
+    QString displayName = data.value("label").toString();
     const QString shareWith = data.value("value").toObject().value("shareWith").toString();
     Sharee::Type type = (Sharee::Type)data.value("value").toObject().value("shareType").toInt();
+    const QString additionalInfo = data.value("value").toObject().value("shareWithAdditionalInfo").toString();
+    if (!additionalInfo.isEmpty()) {
+        displayName = tr("%1 (%2)", "sharee (shareWithAdditionalInfo)").arg(displayName, additionalInfo);
+    }
 
     return QSharedPointer<Sharee>(new Sharee(shareWith, displayName, type));
 }
@@ -190,7 +176,7 @@ void ShareeModel::setNewSharees(const QVector<QSharedPointer<Sharee>> &newSharee
         if (it == _sharees.constEnd()) {
             newPersistant << QModelIndex();
         } else {
-            newPersistant << index(it - _sharees.constBegin());
+            newPersistant << index(std::distance(_sharees.constBegin(), it));
         }
     }
 

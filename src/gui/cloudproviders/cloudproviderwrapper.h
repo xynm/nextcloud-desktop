@@ -20,17 +20,17 @@
 
 /* Forward declaration required since gio header files interfere with QObject headers */
 struct _CloudProvidersProviderExporter;
-typedef _CloudProvidersProviderExporter CloudProvidersProviderExporter;
+using CloudProvidersProviderExporter = _CloudProvidersProviderExporter;
 struct _CloudProvidersAccountExporter;
-typedef _CloudProvidersAccountExporter CloudProvidersAccountExporter;
+using CloudProvidersAccountExporter = _CloudProvidersAccountExporter;
 struct _GMenuModel;
-typedef _GMenuModel GMenuModel;
+using GMenuModel = _GMenuModel;
 struct _GMenu;
-typedef _GMenu GMenu;
+using GMenu = _GMenu;
 struct _GActionGroup;
-typedef _GActionGroup GActionGroup;
-typedef char gchar;
-typedef void* gpointer;
+using GActionGroup = _GActionGroup;
+using gchar = char;
+using gpointer = void*;
 
 using namespace OCC;
 
@@ -38,7 +38,7 @@ class CloudProviderWrapper : public QObject
 {
     Q_OBJECT
 public:
-    explicit CloudProviderWrapper(QObject *parent = nullptr, Folder *folder = nullptr, CloudProvidersProviderExporter* cloudprovider = nullptr);
+    explicit CloudProviderWrapper(QObject *parent = nullptr, Folder *folder = nullptr, int folderId = 0, CloudProvidersProviderExporter* cloudprovider = nullptr);
     ~CloudProviderWrapper();
     CloudProvidersAccountExporter* accountExporter();
     Folder* folder();
@@ -57,7 +57,7 @@ private:
     Folder *_folder;
     CloudProvidersProviderExporter *_cloudProvider;
     CloudProvidersAccountExporter *_cloudProviderAccount;
-    QList<QPair<QString, QString>> *_recentlyChanged;
+    QList<QPair<QString, QString>> _recentlyChanged;
     bool _paused;
     GMenu* _mainMenu = nullptr;
     GMenu* _recentMenu = nullptr;

@@ -29,12 +29,10 @@ namespace OCC {
 
 Q_DECLARE_LOGGING_CATEGORY(lcWizard)
 
+class WelcomePage;
 class OwncloudSetupPage;
 class OwncloudHttpCredsPage;
 class OwncloudOAuthCredsPage;
-#ifndef NO_SHIBBOLETH
-class OwncloudShibbolethCredsPage;
-#endif
 class OwncloudAdvancedSetupPage;
 class OwncloudWizardResultPage;
 class AbstractCredentials;
@@ -67,6 +65,7 @@ public:
     QString ocUrl() const;
     QString localFolder() const;
     QStringList selectiveSyncBlacklist() const;
+    bool useVirtualFileSync() const;
     bool isConfirmBigFolderChecked() const;
 
     void enableFinishOnResultWidget(bool enable);
@@ -74,10 +73,22 @@ public:
     void displayError(const QString &, bool retryHTTPonly);
     AbstractCredentials *getCredentials() const;
 
+    void bringToTop();
+    void centerWindow();
+
+    /**
+     * Shows a dialog explaining the virtual files mode and warning about it
+     * being experimental. Calles the callback with true if enabling was
+     * chosen.
+     */
+    static void askExperimentalVirtualFilesFeature(QWidget *receiver, const std::function<void(bool enable)> &callback);
+
     // FIXME: Can those be local variables?
     // Set from the OwncloudSetupPage, later used from OwncloudHttpCredsPage
-    QSslKey _clientSslKey;
-    QSslCertificate _clientSslCertificate;
+    QByteArray _clientCertBundle; // raw, potentially encrypted pkcs12 bundle provided by the user
+    QByteArray _clientCertPassword; // password for the pkcs12
+    QSslKey _clientSslKey; // key extracted from pkcs12
+    QSslCertificate _clientSslCertificate; // cert extracted from pkcs12
     QList<QSslCertificate> _clientSslCaCertificates;
 
 public slots:
@@ -96,24 +107,32 @@ signals:
     void basicSetupFinished(int);
     void skipFolderConfiguration();
     void needCertificate();
+    void styleChanged();
+    void onActivate();
+
+protected:
+    void changeEvent(QEvent *) override;
 
 private:
+    void customizeStyle();
+    void adjustWizardSize();
+    int calculateLongestSideOfWizardPages(const QList<QSize> &pageSizes) const;
+    QList<QSize> calculateWizardPageSizes() const;
+
     AccountPtr _account;
+    WelcomePage *_welcomePage;
     OwncloudSetupPage *_setupPage;
     OwncloudHttpCredsPage *_httpCredsPage;
     OwncloudOAuthCredsPage *_browserCredsPage;
-#ifndef NO_SHIBBOLETH
-    OwncloudShibbolethCredsPage *_shibbolethCredsPage;
-#endif
     Flow2AuthCredsPage *_flow2CredsPage;
     OwncloudAdvancedSetupPage *_advancedSetupPage;
     OwncloudWizardResultPage *_resultPage;
-    AbstractCredentialsWizardPage *_credentialsPage;
+    AbstractCredentialsWizardPage *_credentialsPage = nullptr;
     WebViewPage *_webViewPage;
 
     QStringList _setupLog;
 
-    bool _registration;
+    bool _registration = false;
 
     friend class OwncloudSetupWizard;
 };

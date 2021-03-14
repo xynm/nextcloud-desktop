@@ -1,6 +1,6 @@
 /*
  * Copyright (C) by Olivier Goffart <ogoffart@woboq.com>
- * Copyright (C) by Michael Schuster <michael@nextcloud.com>
+ * Copyright (C) by Michael Schuster <michael@schuster.ms>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,15 +14,15 @@
  */
 
 #include <QVariant>
-#include <QMenu>
-#include <QClipboard>
+#include <QVBoxLayout>
 
-#include "wizard/flow2authcredspage.h"
+#include "flow2authcredspage.h"
 #include "theme.h"
 #include "account.h"
 #include "cookiejar.h"
 #include "wizard/owncloudwizardcommon.h"
 #include "wizard/owncloudwizard.h"
+#include "wizard/flow2authwidget.h"
 #include "creds/credentialsfactory.h"
 #include "creds/webflowcredentials.h"
 
@@ -31,57 +31,54 @@ namespace OCC {
 Flow2AuthCredsPage::Flow2AuthCredsPage()
     : AbstractCredentialsWizardPage()
 {
-    _ui.setupUi(this);
+    _layout = new QVBoxLayout(this);
 
-    Theme *theme = Theme::instance();
-    _ui.topLabel->hide();
-    _ui.bottomLabel->hide();
-    QVariant variant = theme->customMedia(Theme::oCSetupTop);
-    WizardCommon::setupCustomMedia(variant, _ui.topLabel);
-    variant = theme->customMedia(Theme::oCSetupBottom);
-    WizardCommon::setupCustomMedia(variant, _ui.bottomLabel);
+    _flow2AuthWidget = new Flow2AuthWidget();
+    _layout->addWidget(_flow2AuthWidget);
 
-    WizardCommon::initErrorLabel(_ui.errorLabel);
+    connect(_flow2AuthWidget, &Flow2AuthWidget::authResult, this, &Flow2AuthCredsPage::slotFlow2AuthResult);
 
-    setTitle(WizardCommon::titleTemplate().arg(tr("Connect to %1").arg(Theme::instance()->appNameGUI())));
-    setSubTitle(WizardCommon::subTitleTemplate().arg(tr("Login in your browser (Login Flow v2)")));
+    // Connect styleChanged events to our widgets, so they can adapt (Dark-/Light-Mode switching)
+    connect(this, &Flow2AuthCredsPage::styleChanged, _flow2AuthWidget, &Flow2AuthWidget::slotStyleChanged);
 
-    connect(_ui.openLinkButton, &QCommandLinkButton::clicked, this, &Flow2AuthCredsPage::slotOpenBrowser);
-    connect(_ui.copyLinkButton, &QCommandLinkButton::clicked, this, &Flow2AuthCredsPage::slotCopyLinkToClipboard);
+    // allow Flow2 page to poll on window activation
+    connect(this, &Flow2AuthCredsPage::pollNow, _flow2AuthWidget, &Flow2AuthWidget::slotPollNow);
 }
 
 void Flow2AuthCredsPage::initializePage()
 {
-    OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
+    auto *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
     Q_ASSERT(ocWizard);
     ocWizard->account()->setCredentials(CredentialsFactory::create("http"));
-    _asyncAuth.reset(new Flow2Auth(ocWizard->account().data(), this));
-    connect(_asyncAuth.data(), &Flow2Auth::result, this, &Flow2AuthCredsPage::asyncAuthResult, Qt::QueuedConnection);
-    _asyncAuth->start();
+
+    if(_flow2AuthWidget)
+        _flow2AuthWidget->startAuth(ocWizard->account().data());
 
     // Don't hide the wizard (avoid user confusion)!
     //wizard()->hide();
+
+    _flow2AuthWidget->slotStyleChanged();
 }
 
 void OCC::Flow2AuthCredsPage::cleanupPage()
 {
     // The next or back button was activated, show the wizard again
     wizard()->show();
-    _asyncAuth.reset();
+    if(_flow2AuthWidget)
+        _flow2AuthWidget->resetAuth();
 
     // Forget sensitive data
     _appPassword.clear();
     _user.clear();
 }
 
-void Flow2AuthCredsPage::asyncAuthResult(Flow2Auth::Result r, const QString &user,
-    const QString &appPassword)
+void Flow2AuthCredsPage::slotFlow2AuthResult(Flow2Auth::Result r, const QString &errorString, const QString &user, const QString &appPassword)
 {
+    Q_UNUSED(errorString)
     switch (r) {
     case Flow2Auth::NotSupported: {
         /* Flow2Auth not supported (can't open browser) */
-        _ui.errorLabel->setText(tr("Unable to open the Browser, please copy the link to your Browser."));
-        _ui.errorLabel->show();
+        wizard()->show();
 
         /* Don't fallback to HTTP credentials */
         /*OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
@@ -91,13 +88,12 @@ void Flow2AuthCredsPage::asyncAuthResult(Flow2Auth::Result r, const QString &use
     }
     case Flow2Auth::Error:
         /* Error while getting the access token.  (Timeout, or the server did not accept our client credentials */
-        _ui.errorLabel->show();
         wizard()->show();
         break;
     case Flow2Auth::LoggedIn: {
         _user = user;
         _appPassword = appPassword;
-        OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
+        auto *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
         Q_ASSERT(ocWizard);
 
         emit connectToOCUrl(ocWizard->account()->url().toString());
@@ -113,12 +109,16 @@ int Flow2AuthCredsPage::nextId() const
 
 void Flow2AuthCredsPage::setConnected()
 {
-    wizard()->show();
+    auto *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
+    Q_ASSERT(ocWizard);
+
+    // bring wizard to top
+    ocWizard->bringToTop();
 }
 
 AbstractCredentials *Flow2AuthCredsPage::getCredentials() const
 {
-    OwncloudWizard *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
+    auto *ocWizard = qobject_cast<OwncloudWizard *>(wizard());
     Q_ASSERT(ocWizard);
     return new WebFlowCredentials(
                 _user,
@@ -134,19 +134,14 @@ bool Flow2AuthCredsPage::isComplete() const
     return false; /* We can never go forward manually */
 }
 
-void Flow2AuthCredsPage::slotOpenBrowser()
+void Flow2AuthCredsPage::slotPollNow()
 {
-    if (_ui.errorLabel)
-        _ui.errorLabel->hide();
-
-    if (_asyncAuth)
-        _asyncAuth->openBrowser();
+    emit pollNow();
 }
 
-void Flow2AuthCredsPage::slotCopyLinkToClipboard()
+void Flow2AuthCredsPage::slotStyleChanged()
 {
-    if (_asyncAuth)
-        QApplication::clipboard()->setText(_asyncAuth->authorisationLink().toString(QUrl::FullyEncoded));
+    emit styleChanged();
 }
 
 } // namespace OCC

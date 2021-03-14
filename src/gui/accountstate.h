@@ -29,9 +29,11 @@ namespace OCC {
 
 class AccountState;
 class Account;
+class AccountApp;
 class RemoteWipe;
 
-typedef QExplicitlySharedDataPointer<AccountState> AccountStatePtr;
+using AccountStatePtr = QExplicitlySharedDataPointer<AccountState>;
+using AccountAppList = QList<AccountApp *>;
 
 /**
  * @brief Extra info about an ownCloud server account.
@@ -40,6 +42,8 @@ typedef QExplicitlySharedDataPointer<AccountState> AccountStatePtr;
 class AccountState : public QObject, public QSharedData
 {
     Q_OBJECT
+    Q_PROPERTY(AccountPtr account MEMBER _account)
+
 public:
     enum State {
         /// Not even attempting to connect, most likely because the
@@ -73,7 +77,7 @@ public:
     };
 
     /// The actual current connectivity status.
-    typedef ConnectionValidator::Status ConnectionStatus;
+    using ConnectionStatus = ConnectionValidator::Status;
 
     /// Use the account as parent
     explicit AccountState(AccountPtr account);
@@ -100,6 +104,9 @@ public:
     static QString stateString(State state);
 
     bool isSignedOut() const;
+
+    AccountAppList appList() const;
+    AccountApp* findApp(const QString &appId) const;
 
     /** A user-triggered sign out which disconnects, stops syncs
      * for the account and forgets the password. */
@@ -129,7 +136,7 @@ public:
      *  the server to validate the connection if the last successful etag job
      *  was not so long ago.
      */
-    void tagLastSuccessfullETagRequest();
+    void tagLastSuccessfullETagRequest(const QDateTime &tp);
 
     /** Saves the ETag Response header from the last Notifications api
      * request with statusCode 200.
@@ -161,10 +168,12 @@ public slots:
 
 private:
     void setState(State state);
+    void fetchNavigationApps();
 
 signals:
-    void stateChanged(int state);
+    void stateChanged(State state);
     void isConnectedChanged();
+    void hasFetchedNavigationApps();
 
 protected Q_SLOTS:
     void slotConnectionValidatorResult(ConnectionValidator::Status status, const QStringList &errors);
@@ -176,13 +185,17 @@ protected Q_SLOTS:
     void slotCredentialsFetched(AbstractCredentials *creds);
     void slotCredentialsAsked(AbstractCredentials *creds);
 
+    void slotNavigationAppsFetched(const QJsonDocument &reply, int statusCode);
+    void slotEtagResponseHeaderReceived(const QByteArray &value, int statusCode);
+    void slotOcsError(int statusCode, const QString &message);
+
 private:
     AccountPtr _account;
     State _state;
     ConnectionStatus _connectionStatus;
     QStringList _connectionErrors;
     bool _waitingForNewCredentials;
-    QElapsedTimer _timeSinceLastETagCheck;
+    QDateTime _timeOfLastETagCheck;
     QPointer<ConnectionValidator> _connectionValidator;
     QByteArray _notificationsEtagResponseHeader;
     QByteArray _navigationAppsEtagResponseHeader;
@@ -205,7 +218,34 @@ private:
      */
     RemoteWipe *_remoteWipe;
 
+    /**
+     * Holds the App names and URLs available on the server
+     */
+    AccountAppList _apps;
+
 };
+
+class AccountApp : public QObject
+{
+    Q_OBJECT
+public:
+    AccountApp(const QString &name, const QUrl &url,
+        const QString &id, const QUrl &iconUrl,
+        QObject* parent = nullptr);
+
+    QString name() const;
+    QUrl url() const;
+    QString id() const;
+    QUrl iconUrl() const;
+
+private:
+    QString _name;
+    QUrl _url;
+
+    QString _id;
+    QUrl _iconUrl;
+};
+
 }
 
 Q_DECLARE_METATYPE(OCC::AccountState *)

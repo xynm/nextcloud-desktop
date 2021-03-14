@@ -15,15 +15,16 @@
 #ifndef _THEME_H
 #define _THEME_H
 
+#include <QIcon>
 #include <QObject>
 #include "syncresult.h"
 
-class QIcon;
 class QString;
 class QObject;
 class QPixmap;
 class QColor;
 class QPaintDevice;
+class QPalette;
 
 namespace OCC {
 
@@ -36,6 +37,26 @@ class SyncResult;
 class OWNCLOUDSYNC_EXPORT Theme : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(bool branded READ isBranded CONSTANT)
+    Q_PROPERTY(QString appNameGUI READ appNameGUI CONSTANT)
+    Q_PROPERTY(QString appName READ appName CONSTANT)
+    Q_PROPERTY(QUrl stateOnlineImageSource READ stateOnlineImageSource CONSTANT)
+    Q_PROPERTY(QUrl stateOfflineImageSource READ stateOfflineImageSource CONSTANT)
+#ifndef TOKEN_AUTH_ONLY
+    Q_PROPERTY(QIcon folderDisabledIcon READ folderDisabledIcon CONSTANT)
+    Q_PROPERTY(QIcon folderOfflineIcon READ folderOfflineIcon CONSTANT)
+    Q_PROPERTY(QIcon applicationIcon READ applicationIcon CONSTANT)
+#endif
+    Q_PROPERTY(QString version READ version CONSTANT)
+    Q_PROPERTY(QString helpUrl READ helpUrl CONSTANT)
+    Q_PROPERTY(QString conflictHelpUrl READ conflictHelpUrl CONSTANT)
+    Q_PROPERTY(QString overrideServerUrl READ overrideServerUrl)
+    Q_PROPERTY(bool forceOverrideServerUrl READ forceOverrideServerUrl)
+#ifndef TOKEN_AUTH_ONLY
+    Q_PROPERTY(QColor wizardHeaderTitleColor READ wizardHeaderTitleColor CONSTANT)
+    Q_PROPERTY(QColor wizardHeaderBackgroundColor READ wizardHeaderBackgroundColor CONSTANT)
+#endif
+    Q_PROPERTY(QString updateCheckUrl READ updateCheckUrl CONSTANT)
 public:
     enum CustomMediaType {
         oCSetupTop, // ownCloud connect page
@@ -48,6 +69,16 @@ public:
     static Theme *instance();
 
     ~Theme();
+
+    /**
+     * @brief isBranded indicates if the current application is branded
+     *
+     * By default, it is considered branded if the APPLICATION_NAME is
+     * different from "Nextcloud".
+     *
+     * @return true if branded, false otherwise
+     */
+    virtual bool isBranded() const;
 
     /**
      * @brief appNameGUI - Human readable application name.
@@ -81,6 +112,18 @@ public:
     virtual QString appName() const;
 
     /**
+     * @brief Returns full path to an online state icon
+     * @return QUrl full path to an icon
+     */
+    QUrl stateOnlineImageSource() const;
+
+    /**
+     * @brief Returns full path to an offline state icon
+     * @return QUrl full path to an icon
+     */
+    QUrl stateOfflineImageSource() const;
+
+    /**
      * @brief configFileName
      * @return the name of the config file.
      */
@@ -89,13 +132,17 @@ public:
 #ifndef TOKEN_AUTH_ONLY
     static QString hidpiFileName(const QString &fileName, QPaintDevice *dev = nullptr);
 
+    static QString hidpiFileName(const QString &iconName, const QColor &backgroundColor, QPaintDevice *dev = nullptr);
+
+    static bool isHidpi(QPaintDevice *dev = nullptr);
+
     /**
       * get an sync state icon
       */
-    virtual QIcon syncStateIcon(SyncResult::Status, bool sysTray = false, bool sysTrayMenuVisible = false) const;
+    virtual QIcon syncStateIcon(SyncResult::Status, bool sysTray = false) const;
 
     virtual QIcon folderDisabledIcon() const;
-    virtual QIcon folderOfflineIcon(bool sysTray = false, bool sysTrayMenuVisible = false) const;
+    virtual QIcon folderOfflineIcon(bool sysTray = false) const;
     virtual QIcon applicationIcon() const;
 #endif
 
@@ -138,9 +185,16 @@ public:
     /**
      * Setting a value here will pre-define the server url.
      *
-     * The respective UI controls will be disabled
+     * The respective UI controls will be disabled only if forceOverrideServerUrl() is true
      */
     virtual QString overrideServerUrl() const;
+
+    /**
+     * Enforce a pre-defined server url.
+     *
+     * When true, the respective UI controls will be disabled
+     */
+    virtual bool forceOverrideServerUrl() const;
 
     /**
      * This is only usefull when previous version had a different overrideServerUrl
@@ -165,7 +219,7 @@ public:
     virtual QString enforcedLocale() const { return QString(); }
 
     /** colored, white or black */
-    QString systrayIconFlavor(bool mono, bool sysTrayMenuVisible = false) const;
+    QString systrayIconFlavor(bool mono) const;
 
 #ifndef TOKEN_AUTH_ONLY
     /**
@@ -180,6 +234,8 @@ public:
 
     /** @return color for the setup wizard. */
     virtual QColor wizardHeaderBackgroundColor() const;
+
+    virtual QPixmap wizardApplicationLogo() const;
 
     /** @return logo for the setup wizard. */
     virtual QPixmap wizardHeaderLogo() const;
@@ -203,6 +259,11 @@ public:
      * About dialog contents
      */
     virtual QString about() const;
+
+    /**
+     * Legal notice dialog version detail contents
+     */
+    virtual QString aboutDetails() const;
 
     /**
      * Define if the systray icons should be using mono design
@@ -355,11 +416,118 @@ public:
     * (actually 2019/09/13 only systray theming).
     */
 	virtual QIcon uiThemeIcon(const QString &iconName, bool uiHasDarkBg) const;
+    
+    /**
+     * @brief Perform a calculation to check if a colour is dark or light and accounts for different sensitivity of the human eye.
+     *
+     * @return True if the specified colour is dark.
+     *
+     * 2019/12/08: Moved here from SettingsDialog.
+     */
+    static bool isDarkColor(const QColor &color);
+    
+    /**
+     * @brief Return the colour to be used for HTML links (e.g. used in QLabel), based on the current app palette or given colour (Dark-/Light-Mode switching).
+     *
+     * @return Background-aware colour for HTML links, based on the current app palette or given colour.
+     *
+     * 2019/12/08: Implemented for the Dark Mode on macOS, because the app palette can not account for that (Qt 5.12.5).
+     */
+    static QColor getBackgroundAwareLinkColor(const QColor &backgroundColor);
+    
+    /**
+     * @brief Return the colour to be used for HTML links (e.g. used in QLabel), based on the current app palette (Dark-/Light-Mode switching).
+     *
+     * @return Background-aware colour for HTML links, based on the current app palette.
+     *
+     * 2019/12/08: Implemented for the Dark Mode on macOS, because the app palette can not account for that (Qt 5.12.5).
+     */
+    static QColor getBackgroundAwareLinkColor();
+
+    /**
+     * @brief Appends a CSS-style colour value to all HTML link tags in a given string, based on the current app palette or given colour (Dark-/Light-Mode switching).
+     *
+     * 2019/12/08: Implemented for the Dark Mode on macOS, because the app palette can not account for that (Qt 5.12.5).
+     *
+     * This way we also avoid having certain strings re-translated on Transifex.
+     */
+    static void replaceLinkColorStringBackgroundAware(QString &linkString, const QColor &backgroundColor);
+
+    /**
+     * @brief Appends a CSS-style colour value to all HTML link tags in a given string, based on the current app palette (Dark-/Light-Mode switching).
+     *
+     * 2019/12/08: Implemented for the Dark Mode on macOS, because the app palette can not account for that (Qt 5.12.5).
+     *
+     * This way we also avoid having certain strings re-translated on Transifex.
+     */
+    static void replaceLinkColorStringBackgroundAware(QString &linkString);
+
+    /**
+     * @brief Appends a CSS-style colour value to all HTML link tags in a given string, as specified by newColor.
+     *
+     * 2019/12/19: Implemented for the Dark Mode on macOS, because the app palette can not account for that (Qt 5.12.5).
+     *
+     * This way we also avoid having certain strings re-translated on Transifex.
+     */
+    static void replaceLinkColorString(QString &linkString, const QColor &newColor);
+
+    /**
+     * @brief Creates a colour-aware icon based on the specified palette's base colour.
+     *
+     * @return QIcon, colour-aware (inverted on dark backgrounds).
+     *
+     * 2019/12/09: Moved here from SettingsDialog.
+     */
+    static QIcon createColorAwareIcon(const QString &name, const QPalette &palette);
+
+    /**
+     * @brief Creates a colour-aware icon based on the app palette's base colour (Dark-/Light-Mode switching).
+     *
+     * @return QIcon, colour-aware (inverted on dark backgrounds).
+     *
+     * 2019/12/09: Moved here from SettingsDialog.
+     */
+    static QIcon createColorAwareIcon(const QString &name);
+
+    /**
+     * @brief Creates a colour-aware pixmap based on the specified palette's base colour.
+     *
+     * @return QPixmap, colour-aware (inverted on dark backgrounds).
+     *
+     * 2019/12/09: Adapted from createColorAwareIcon.
+     */
+    static QPixmap createColorAwarePixmap(const QString &name, const QPalette &palette);
+
+    /**
+     * @brief Creates a colour-aware pixmap based on the app palette's base colour (Dark-/Light-Mode switching).
+     *
+     * @return QPixmap, colour-aware (inverted on dark backgrounds).
+     *
+     * 2019/12/09: Adapted from createColorAwareIcon.
+     */
+    static QPixmap createColorAwarePixmap(const QString &name);
+
+
+    /**
+     * @brief Whether to show the option to create folders using "virtual files".
+     *
+     * By default, the options are not shown unless experimental options are
+     * manually enabled in the configuration file.
+     */
+    virtual bool showVirtualFilesOption() const;
 
 protected:
 #ifndef TOKEN_AUTH_ONLY
-    QIcon themeIcon(const QString &name, bool sysTray = false, bool sysTrayMenuVisible = false) const;
+    QIcon themeIcon(const QString &name, bool sysTray = false) const;
 #endif
+    /**
+     * @brief Generates image path in the resources
+     * @param name Name of the image file
+     * @param size Size in the power of two (16, 32, 64, etc.)
+     * @param sysTray Whether the image requested is for Systray or not
+     * @return QString image path in the resources
+     **/
+    QString themeImagePath(const QString &name, int size = -1, bool sysTray = false) const;
     Theme();
 
 signals:
@@ -370,7 +538,7 @@ private:
     Theme &operator=(Theme const &);
 
     static Theme *_instance;
-    bool _mono;
+    bool _mono = false;
 #ifndef TOKEN_AUTH_ONLY
     mutable QHash<QString, QIcon> _iconCache;
 #endif

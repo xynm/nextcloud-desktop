@@ -70,7 +70,7 @@ SelectiveSyncWidget::SelectiveSyncWidget(AccountPtr account, QWidget *parent)
     , _inserting(false)
     , _folderTree(new QTreeWidget(this))
 {
-    _loading = new QLabel(tr("Loading ..."), _folderTree);
+    _loading = new QLabel(tr("Loading …"), _folderTree);
 
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -106,13 +106,21 @@ QSize SelectiveSyncWidget::sizeHint() const
 
 void SelectiveSyncWidget::refreshFolders()
 {
-    LsColJob *job = new LsColJob(_account, _folderPath, this);
-    job->setProperties(QList<QByteArray>() << "resourcetype"
-                                           << "http://owncloud.org/ns:size");
+    _encryptedPaths.clear();
+
+    auto *job = new LsColJob(_account, _folderPath, this);
+    auto props = QList<QByteArray>() << "resourcetype"
+                                     << "http://owncloud.org/ns:size";
+    if (_account->capabilities().clientSideEncryptionAvailable()) {
+        props << "http://nextcloud.org/ns:is-encrypted";
+    }
+    job->setProperties(props);
     connect(job, &LsColJob::directoryListingSubfolders,
         this, &SelectiveSyncWidget::slotUpdateDirectories);
     connect(job, &LsColJob::finishedWithError,
         this, &SelectiveSyncWidget::slotLscolFinishedWithError);
+    connect(job, &LsColJob::directoryListingIterated,
+        this, &SelectiveSyncWidget::slotGatherEncryptedPaths);
     job->start();
     _folderTree->clear();
     _loading->show();
@@ -153,7 +161,7 @@ void SelectiveSyncWidget::recursiveInsert(QTreeWidgetItem *parent, QStringList p
         parent->setToolTip(0, path);
         parent->setData(0, Qt::UserRole, path);
     } else {
-        SelectiveSyncTreeViewItem *item = static_cast<SelectiveSyncTreeViewItem *>(findFirstChild(parent, pathTrail.first()));
+        auto *item = static_cast<SelectiveSyncTreeViewItem *>(findFirstChild(parent, pathTrail.first()));
         if (!item) {
             item = new SelectiveSyncTreeViewItem(parent);
             if (parent->checkState(0) == Qt::Checked
@@ -191,7 +199,7 @@ void SelectiveSyncWidget::slotUpdateDirectories(QStringList list)
     QScopedValueRollback<bool> isInserting(_inserting);
     _inserting = true;
 
-    SelectiveSyncTreeViewItem *root = static_cast<SelectiveSyncTreeViewItem *>(_folderTree->topLevelItem(0));
+    auto *root = static_cast<SelectiveSyncTreeViewItem *>(_folderTree->topLevelItem(0));
 
     QUrl url = _account->davUrl();
     QString pathToRemove = url.path();
@@ -248,6 +256,15 @@ void SelectiveSyncWidget::slotUpdateDirectories(QStringList list)
     foreach (QString path, list) {
         auto size = job ? job->_folderInfos[path].size : 0;
         path.remove(pathToRemove);
+
+        // Don't allow to select subfolders of encrypted subfolders
+        const auto isAnyAncestorEncrypted = std::any_of(std::cbegin(_encryptedPaths), std::cend(_encryptedPaths), [=](const QString &encryptedPath) {
+            return path.size() > encryptedPath.size() && path.startsWith(encryptedPath);
+        });
+        if (isAnyAncestorEncrypted) {
+            continue;
+        }
+
         QStringList paths = path.split('/');
         if (paths.last().isEmpty())
             paths.removeLast();
@@ -281,6 +298,19 @@ void SelectiveSyncWidget::slotLscolFinishedWithError(QNetworkReply *r)
     _loading->resize(_loading->sizeHint()); // because it's not in a layout
 }
 
+void SelectiveSyncWidget::slotGatherEncryptedPaths(const QString &path, const QMap<QString, QString> &properties)
+{
+    const auto it = properties.find("is-encrypted");
+    if (it == properties.cend() || *it != QStringLiteral("1")) {
+        return;
+    }
+
+    const auto webdavFolder = QUrl(_account->davUrl()).path();
+    Q_ASSERT(path.startsWith(webdavFolder));
+    // This dialog use the postfix / convention for folder paths
+    _encryptedPaths << path.mid(webdavFolder.size()) + '/';
+}
+
 void SelectiveSyncWidget::slotItemExpanded(QTreeWidgetItem *item)
 {
     QString dir = item->data(0, Qt::UserRole).toString();
@@ -290,7 +320,7 @@ void SelectiveSyncWidget::slotItemExpanded(QTreeWidgetItem *item)
     if (!_folderPath.isEmpty()) {
         prefix = _folderPath + QLatin1Char('/');
     }
-    LsColJob *job = new LsColJob(_account, prefix + dir, this);
+    auto *job = new LsColJob(_account, prefix + dir, this);
     job->setProperties(QList<QByteArray>() << "resourcetype"
                                            << "http://owncloud.org/ns:size");
     connect(job, &LsColJob::directoryListingSubfolders,
@@ -433,7 +463,7 @@ SelectiveSyncDialog::SelectiveSyncDialog(AccountPtr account, Folder *folder, QWi
     , _folder(folder)
     , _okButton(nullptr) // defined in init()
 {
-    bool ok;
+    bool ok = false;
     init(account);
     QStringList selectiveSyncList = _folder->journalDb()->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, &ok);
     if (ok) {
@@ -457,13 +487,13 @@ SelectiveSyncDialog::SelectiveSyncDialog(AccountPtr account, const QString &fold
 void SelectiveSyncDialog::init(const AccountPtr &account)
 {
     setWindowTitle(tr("Choose What to Sync"));
-    QVBoxLayout *layout = new QVBoxLayout(this);
+    auto *layout = new QVBoxLayout(this);
     _selectiveSync = new SelectiveSyncWidget(account, this);
     layout->addWidget(_selectiveSync);
-    QDialogButtonBox *buttonBox = new QDialogButtonBox(Qt::Horizontal);
+    auto *buttonBox = new QDialogButtonBox(Qt::Horizontal);
     _okButton = buttonBox->addButton(QDialogButtonBox::Ok);
     connect(_okButton, &QPushButton::clicked, this, &SelectiveSyncDialog::accept);
-    QPushButton *button;
+    QPushButton *button = nullptr;
     button = buttonBox->addButton(QDialogButtonBox::Cancel);
     connect(button, &QAbstractButton::clicked, this, &QDialog::reject);
     layout->addWidget(buttonBox);
@@ -472,7 +502,7 @@ void SelectiveSyncDialog::init(const AccountPtr &account)
 void SelectiveSyncDialog::accept()
 {
     if (_folder) {
-        bool ok;
+        bool ok = false;
         auto oldBlackListSet = _folder->journalDb()->getSelectiveSyncList(SyncJournalDb::SelectiveSyncBlackList, &ok).toSet();
         if (!ok) {
             return;
@@ -490,7 +520,8 @@ void SelectiveSyncDialog::accept()
         auto blackListSet = blackList.toSet();
         auto changes = (oldBlackListSet - blackListSet) + (blackListSet - oldBlackListSet);
         foreach (const auto &it, changes) {
-            _folder->journalDb()->avoidReadFromDbOnNextSync(it);
+            _folder->journalDb()->schedulePathForRemoteDiscovery(it);
+            _folder->schedulePathForLocalDiscovery(it);
         }
 
         folderMan->scheduleFolder(_folder);

@@ -25,6 +25,8 @@ class QNetworkAccessManager;
 class QNetworkReply;
 namespace OCC {
 
+class AbstractNetworkJob;
+
 class OWNCLOUDSYNC_EXPORT AbstractCredentials : public QObject
 {
     Q_OBJECT
@@ -43,6 +45,7 @@ public:
 
     virtual QString authType() const = 0;
     virtual QString user() const = 0;
+    virtual QString password() const = 0;
     virtual QNetworkAccessManager *createQNAM() const = 0;
 
     /** Whether there are credentials that can be used for a connection attempt. */
@@ -87,6 +90,9 @@ public:
 
     static QString keychainKey(const QString &url, const QString &user, const QString &accountId);
 
+    /** If the job need to be restarted or queue, this does it and returns true. */
+    virtual bool retryIfNeeded(AbstractNetworkJob *) { return false; }
+
 Q_SIGNALS:
     /** Emitted when fetchFromKeychain() is done.
      *
@@ -103,8 +109,8 @@ Q_SIGNALS:
     void asked();
 
 protected:
-    Account *_account;
-    bool _wasFetched;
+    Account *_account = nullptr;
+    bool _wasFetched = false;
 };
 
 } // namespace OCC

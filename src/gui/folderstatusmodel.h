@@ -54,39 +54,31 @@ public:
     QModelIndex parent(const QModelIndex &child) const override;
     bool canFetchMore(const QModelIndex &parent) const override;
     void fetchMore(const QModelIndex &parent) override;
+    void resetAndFetch(const QModelIndex &parent);
     bool hasChildren(const QModelIndex &parent = QModelIndex()) const override;
 
     struct SubFolderInfo
     {
-        SubFolderInfo()
-            : _folder(nullptr)
-            , _size(0)
-            , _isExternal(false)
-            , _fetched(false)
-            , _hasError(false)
-            , _fetchingLabel(false)
-            , _isUndecided(false)
-            , _checked(Qt::Checked)
-        {
-        }
-        Folder *_folder;
-        QString _name;
-        QString _path;
+        Folder *_folder = nullptr;
+        QString _name; // Folder name to be displayed in the UI
+        QString _path; // Sub-folder path that should always point to a local filesystem's folder
+        QString _e2eMangledName; // Mangled name that needs to be used when making fetch requests and should not be used for displaying in the UI
         QVector<int> _pathIdx;
         QVector<SubFolderInfo> _subs;
-        qint64 _size;
-        bool _isExternal;
+        qint64 _size = 0;
+        bool _isExternal = false;
+        bool _isEncrypted = false;
 
-        bool _fetched; // If we did the LSCOL for this folder already
+        bool _fetched = false; // If we did the LSCOL for this folder already
         QPointer<LsColJob> _fetchingJob; // Currently running LsColJob
-        bool _hasError; // If the last fetching job ended in an error
+        bool _hasError = false; // If the last fetching job ended in an error
         QString _lastErrorString;
-        bool _fetchingLabel; // Whether a 'fetching in progress' label is shown.
+        bool _fetchingLabel = false; // Whether a 'fetching in progress' label is shown.
         // undecided folders are the big folders that the user has not accepted yet
-        bool _isUndecided;
+        bool _isUndecided = false;
         QByteArray _fileId; // the file id for this folder on the server.
 
-        Qt::CheckState _checked;
+        Qt::CheckState _checked = Qt::Checked;
 
         // Whether this has a FetchLabel subrow
         bool hasLabel() const;
@@ -96,19 +88,14 @@ public:
 
         struct Progress
         {
-            Progress()
-                : _warningCount(0)
-                , _overallPercent(0)
-            {
-            }
             bool isNull() const
             {
                 return _progressString.isEmpty() && _warningCount == 0 && _overallSyncString.isEmpty();
             }
             QString _progressString;
             QString _overallSyncString;
-            int _warningCount;
-            int _overallPercent;
+            int _warningCount = 0;
+            int _overallPercent = 0;
         };
         Progress _progress;
     };
@@ -121,7 +108,7 @@ public:
         FetchLabel };
     ItemType classify(const QModelIndex &index) const;
     SubFolderInfo *infoForIndex(const QModelIndex &index) const;
-    SubFolderInfo *infoForFileId(const QByteArray &fileId, SubFolderInfo *info = nullptr) const;
+    bool isAnyAncestorEncrypted(const QModelIndex &index) const;
     // If the selective sync check boxes were changed
     bool isDirty() { return _dirty; }
 
@@ -142,6 +129,7 @@ public slots:
 private slots:
     void slotUpdateDirectories(const QStringList &);
     void slotGatherPermissions(const QString &name, const QMap<QString, QString> &properties);
+    void slotGatherEncryptionStatus(const QString &href, const QMap<QString, QString> &properties);
     void slotLscolFinishedWithError(QNetworkReply *r);
     void slotFolderSyncStateChange(Folder *f);
     void slotFolderScheduleQueueChanged();
@@ -154,10 +142,10 @@ private slots:
     void slotShowFetchProgress();
 
 private:
-    QStringList createBlackList(OCC::FolderStatusModel::SubFolderInfo *root,
+    QStringList createBlackList(const OCC::FolderStatusModel::SubFolderInfo &root,
         const QStringList &oldBlackList) const;
-    const AccountState *_accountState;
-    bool _dirty; // If the selective sync checkboxes were changed
+    const AccountState *_accountState = nullptr;
+    bool _dirty = false; // If the selective sync checkboxes were changed
 
     /**
      * Keeps track of items that are fetching data from the server.
@@ -175,5 +163,7 @@ signals:
 };
 
 } // namespace OCC
+
+Q_DECLARE_METATYPE(OCC::FolderStatusModel::SubFolderInfo*)
 
 #endif // FOLDERSTATUSMODEL_H

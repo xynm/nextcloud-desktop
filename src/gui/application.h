@@ -67,21 +67,33 @@ public:
     bool versionOnly(); // only display the version?
     void showVersion();
 
-    void showSettingsDialog();
+    void showMainDialog();
+
+    ownCloudGui *gui() const;
 
 public slots:
     // TODO: this should not be public
     void slotownCloudWizardDone(int);
     void slotCrash();
+    /**
+     * Will download a virtual file, and open the result.
+     * The argument is the filename of the virtual file (including the extension)
+     */
+    void openVirtualFile(const QString &filename);
+
+    /// Attempt to show() the tray icon again. Used if no systray was available initially.
+    void tryTrayAgain();
 
 protected:
     void parseOptions(const QStringList &);
     void setupTranslations();
     void setupLogging();
+    bool event(QEvent *event);
 
 signals:
     void folderRemoved();
     void folderStateChanged(Folder *);
+    void isShowingSettingsDialog();
 
 protected slots:
     void slotParseMessage(const QString &, QObject *);
@@ -91,9 +103,16 @@ protected slots:
     void slotAccountStateAdded(AccountState *accountState);
     void slotAccountStateRemoved(AccountState *accountState);
     void slotSystemOnlineConfigurationChanged(QNetworkConfiguration);
+    void slotGuiIsShowingSettings();
 
 private:
     void setHelp();
+
+    /**
+     * Maybe a newer version of the client was used with this config file:
+     * if so, backup, confirm with user and remove the config that can't be read.
+     */
+    bool configVersionMigration();
 
     QPointer<ownCloudGui> _gui;
 
@@ -106,6 +125,7 @@ private:
 
     // options from command line:
     bool _showLogWindow;
+    bool _quitInstance = false;
     QString _logFile;
     QString _logDir;
     int _logExpire;

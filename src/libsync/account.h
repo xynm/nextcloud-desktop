@@ -51,10 +51,10 @@ namespace OCC {
 
 class AbstractCredentials;
 class Account;
-typedef QSharedPointer<Account> AccountPtr;
-class QuotaInfo;
+using AccountPtr = QSharedPointer<Account>;
 class AccessManager;
 class SimpleNetworkJob;
+class PushNotifications;
 
 /**
  * @brief Reimplement this to handle SSL errors from libsync
@@ -63,7 +63,7 @@ class SimpleNetworkJob;
 class AbstractSslErrorHandler
 {
 public:
-    virtual ~AbstractSslErrorHandler() {}
+    virtual ~AbstractSslErrorHandler() = default;
     virtual bool handleErrors(QList<QSslError>, const QSslConfiguration &conf, QList<QSslCertificate> *, AccountPtr) = 0;
 };
 
@@ -77,6 +77,11 @@ public:
 class OWNCLOUDSYNC_EXPORT Account : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString id MEMBER _id)
+    Q_PROPERTY(QString davUser MEMBER _davUser)
+    Q_PROPERTY(QString displayName MEMBER _displayName)
+    Q_PROPERTY(QUrl url MEMBER _url)
+
 public:
     static AccountPtr create();
     ~Account();
@@ -220,10 +225,6 @@ public:
      */
     bool serverVersionUnsupported() const;
 
-    // Fixed from 8.1 https://github.com/owncloud/client/issues/3730
-    /** Detects a specific bug in older server versions */
-    bool rootEtagChangesNotOnlySubFolderEtags();
-
     /** True when the server connection is using HTTP2  */
     bool isHttp2Supported() { return _http2Supported; }
     void setHttp2Supported(bool value) { _http2Supported = value; }
@@ -243,8 +244,14 @@ public:
 
     /// Used in RemoteWipe
     void retrieveAppPassword();
-    void setAppPassword(QString appPassword);
+    void writeAppPasswordOnce(QString appPassword);
     void deleteAppPassword();
+
+    /// Direct Editing
+    // Check for the directEditing capability
+    void fetchDirectEditors(const QUrl &directEditingURL, const QString &directEditingETag);
+
+    PushNotifications *pushNotifications() const;
 
 public slots:
     /// Used when forgetting credentials
@@ -275,13 +282,18 @@ signals:
     /// Used in RemoteWipe
     void appPasswordRetrieved(QString);
 
+    void pushNotificationsReady(Account *account);
+    void pushNotificationsDisabled(Account *account);
+
 protected Q_SLOTS:
     void slotCredentialsFetched();
     void slotCredentialsAsked();
+    void slotDirectEditingRecieved(const QJsonDocument &json);
 
 private:
     Account(QObject *parent = nullptr);
     void setSharedThis(AccountPtr sharedThis);
+    void trySetupPushNotifications();
 
     QWeakPointer<Account> _sharedThis;
     QString _id;
@@ -306,7 +318,6 @@ private:
     Capabilities _capabilities;
     QString _serverVersion;
     QScopedPointer<AbstractSslErrorHandler> _sslErrorHandler;
-    QuotaInfo *_quotaInfo;
     QSharedPointer<QNetworkAccessManager> _am;
     QScopedPointer<AbstractCredentials> _credentials;
     bool _http2Supported = false;
@@ -319,10 +330,35 @@ private:
     QString _davPath; // defaults to value from theme, might be overwritten in brandings
     ClientSideEncryption _e2e;
 
+    /// Used in RemoteWipe
+    bool _wroteAppPassword = false;
+
     friend class AccountManager;
+
+    // Direct Editing
+    QString _lastDirectEditingETag;
+
+    PushNotifications *_pushNotifications = nullptr;
+
+    /* IMPORTANT - remove later - FIXME MS@2019-12-07 -->
+     * TODO: For "Log out" & "Remove account": Remove client CA certs and KEY!
+     *
+     *       Disabled as long as selecting another cert is not supported by the UI.
+     *
+     *       Being able to specify a new certificate is important anyway: expiry etc.
+     *
+     *       We introduce this dirty hack here, to allow deleting them upon Remote Wipe.
+    */
+    public:
+        void setRemoteWipeRequested_HACK() { _isRemoteWipeRequested_HACK = true; }
+        bool isRemoteWipeRequested_HACK() { return _isRemoteWipeRequested_HACK; }
+    private:
+        bool _isRemoteWipeRequested_HACK = false;
+    // <-- FIXME MS@2019-12-07
 };
 }
 
 Q_DECLARE_METATYPE(OCC::AccountPtr)
+Q_DECLARE_METATYPE(OCC::Account *)
 
 #endif //SERVERCONNECTION_H

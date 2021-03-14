@@ -19,6 +19,8 @@
 #include <QUrl>
 #include <QWidget>
 
+#include "common/pinstate.h"
+
 namespace OCC {
 namespace Utility {
 
@@ -26,7 +28,7 @@ namespace Utility {
      *
      * If launching the browser fails, display a message.
      */
-    bool openBrowser(const QUrl &url, QWidget *errorWidgetParent);
+    bool openBrowser(const QUrl &url, QWidget *errorWidgetParent = nullptr);
 
     /** Start composing a new email message.
      *
@@ -34,6 +36,18 @@ namespace Utility {
      */
     bool openEmailComposer(const QString &subject, const QString &body,
         QWidget *errorWidgetParent);
+
+    /** Returns a translated string indicating the current availability.
+     *
+     * This will be used in context menus to describe the current state.
+     */
+    QString vfsCurrentAvailabilityText(VfsItemAvailability availability);
+
+    /** Translated text for "making items always available locally" */
+    QString vfsPinActionText();
+
+    /** Translated text for "free up local space" (and unpinning the item) */
+    QString vfsFreeSpaceActionText();
 
 } // namespace Utility
 } // namespace OCC

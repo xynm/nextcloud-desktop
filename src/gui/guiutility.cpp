@@ -21,12 +21,24 @@
 #include <QMessageBox>
 #include <QUrlQuery>
 
+#include "common/asserts.h"
 using namespace OCC;
 
 Q_LOGGING_CATEGORY(lcUtility, "nextcloud.gui.utility", QtInfoMsg)
 
 bool Utility::openBrowser(const QUrl &url, QWidget *errorWidgetParent)
 {
+    const QStringList allowedUrlSchemes = {
+        "http",
+        "https",
+        "oauthtest"
+    };
+
+    if (!allowedUrlSchemes.contains(url.scheme())) {
+        qCWarning(lcUtility) << "URL format is not supported, or it has been compromised for:" << url.toString();
+        return false;
+    }
+
     if (!QDesktopServices::openUrl(url)) {
         if (errorWidgetParent) {
             QMessageBox::warning(
@@ -65,4 +77,30 @@ bool Utility::openEmailComposer(const QString &subject, const QString &body, QWi
         return false;
     }
     return true;
+}
+
+QString Utility::vfsCurrentAvailabilityText(VfsItemAvailability availability)
+{
+    switch(availability) {
+    case VfsItemAvailability::AlwaysLocal:
+        return QCoreApplication::translate("utility", "Always available locally");
+    case VfsItemAvailability::AllHydrated:
+        return QCoreApplication::translate("utility", "Currently available locally");
+    case VfsItemAvailability::Mixed:
+        return QCoreApplication::translate("utility", "Some available online only");
+    case VfsItemAvailability::AllDehydrated:
+    case VfsItemAvailability::OnlineOnly:
+        return QCoreApplication::translate("utility", "Available online only");
+    }
+    Q_UNREACHABLE();
+}
+
+QString Utility::vfsPinActionText()
+{
+    return QCoreApplication::translate("utility", "Make always available locally");
+}
+
+QString Utility::vfsFreeSpaceActionText()
+{
+    return QCoreApplication::translate("utility", "Free up local space");
 }
